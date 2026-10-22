@@ -29,6 +29,11 @@ SUNRISE=07:20 SUNSET=17:55 ./make.sh 2560x1664
   about a minute (compiling); later runs take seconds.
 - Install: System Settings → Wallpaper → add a photo → pick the `.heic` →
   choose the dynamic option in the menu next to it. One file per display.
+- The screen saver is separate and plays its own video (Aerial) when idle. To
+  keep the sky instead, go to System Settings → Lock Screen → Start Screen
+  Saver when inactive → Never, and set the display-off times there. This is
+  also the cheapest option: a video screen saver costs far more than the
+  wallpaper.
 
 ## Windows
 
@@ -52,8 +57,14 @@ To remove it and get your old wallpaper back:
 powershell -ExecutionPolicy Bypass -File windows\uninstall.ps1
 ```
 
-> Not yet run on a real Windows PC (see Status). If it fails, the error and
-> `%LOCALAPPDATA%\SkyWallpaper\sky.log` say where.
+If the frame looks stale, check the task's last run and the log:
+
+```powershell
+Get-ScheduledTaskInfo SkyWallpaper | Format-List LastRunTime, LastTaskResult, NextRunTime
+Get-Content "$env:LOCALAPPDATA\SkyWallpaper\sky.log" -Tail 20
+```
+
+`LastTaskResult` 0 means the last run worked.
 
 ## Options
 
@@ -102,8 +113,8 @@ It renders the same day with both and compares every pixel and the schedule.
 
 - **macOS:** built and checked on macOS 26.6 (M3, Swift 6.3). The files are
   valid. Not yet confirmed: that macOS switches on local time, not UTC.
-- **Windows:** compiles as C# 5, and its frames match the macOS ones to within
-  one color step. The wallpaper calls, task registration and triggers have not
-  run on Windows yet.
+- **Windows:** installs and sets the wallpaper on a real PC. Its frames match
+  the macOS ones to within one color step. Frames missed during sleep now
+  catch up on wake, unlock and logon; that fix is not yet confirmed on a PC.
 
 Details, measurements and the file format: [docs/NOTES.md](docs/NOTES.md).

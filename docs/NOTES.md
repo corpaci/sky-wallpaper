@@ -60,6 +60,12 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6 (Roslyn csc 3.9):
 - **Frame choice.** Tested with `sky frame` on two rendered sizes: it wraps
   past midnight, switches exactly on the minute, and uses the closest aspect
   ratio for other monitor sizes.
+- **Windows PC (owner, 2026-10-22).** `install.ps1` runs on a real PC: the
+  built-in compiler accepts the code, the task registers, and the wallpaper
+  gets set.
+- **macOS screen saver.** The screen saver is its own setting, separate from
+  the wallpaper. On this Mac it was an Aerial video while the desktop showed
+  the sky HEIC.
 
 ## Not verified
 
@@ -68,10 +74,12 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6 (Roslyn csc 3.9):
   `heicpack --inspect` for the current time.
 - **macOS cache.** Replacing a file at the same path may not refresh the
   wallpaper. That is why output names carry the date.
-- **Windows compiler.** The built-in `csc.exe` is the old pre-Roslyn C# 5
-  compiler, not the one tested here.
-- **Windows runtime.** The `IDesktopWallpaper` calls are untested, and so is
-  whether monitor sizes come back in physical pixels on scaled displays
-  (`sky monitors` prints what it sees).
-- **Windows task.** Registering the task without admin rights, and triggers
-  firing on time and after sleep, are untested.
+- **Windows after sleep.** The first PC run (owner, 2026-10-22) did not
+  update the frame overnight. The likely cause is switch times missed during
+  sleep: "run as soon as possible after a missed start" is not reliable after
+  sleep. The task now also fires on wake (Power-Troubleshooter event 1,
+  Kernel-Power 507 for Modern Standby), on unlock, and 30 s after logon.
+  Unconfirmed: that the fix works, and that a standard user may register the
+  wake trigger (if not, the installer warns and keeps unlock and logon).
+- **Windows scaled displays.** Whether monitor sizes come back in physical
+  pixels on scaled displays is untested (`sky monitors` prints what it sees).

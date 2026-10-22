@@ -57,13 +57,40 @@ if ($LASTEXITCODE -ne 0 -or $times.Count -eq 0) { throw 'Could not read the sche
 
 $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $triggers = @($times | ForEach-Object { New-ScheduledTaskTrigger -Daily -At $_ })
-$triggers += New-ScheduledTaskTrigger -AtLogOn -User $me
+
+# Catch up whenever the desktop comes back. A switch time missed during sleep
+# is not reliably re-run on wake, so the frame from before sleep would stay.
+$logon = New-ScheduledTaskTrigger -AtLogOn -User $me
+$logon.Delay = 'PT30S'  # let Explorer start first
+$triggers += $logon
+$cim = 'Root/Microsoft/Windows/TaskScheduler'
+$triggers += New-CimInstance -ClientOnly -CimClass (Get-CimClass -Namespace $cim -ClassName MSFT_TaskSessionStateChangeTrigger) `
+    -Property @{ StateChange = 8; UserId = $me }  # 8 = session unlock
+$wake = New-CimInstance -ClientOnly -CimClass (Get-CimClass -Namespace $cim -ClassName MSFT_TaskEventTrigger)
+$wake.Enabled = $true
+# Resume from sleep, and leaving Modern Standby.
+$wake.Subscription = @'
+<QueryList><Query Id="0" Path="System">
+<Select Path="System">*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and EventID=1]]</Select>
+<Select Path="System">*[System[Provider[@Name='Microsoft-Windows-Kernel-Power'] and EventID=507]]</Select>
+</Query></QueryList>
+'@
+
 $action = New-ScheduledTaskAction -Execute ('"' + (Join-Path $app 'sky-apply.exe') + '"') -Argument ('apply "' + $frames + '"')
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -MultipleInstances IgnoreNew
 $principal = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal `
-    -Description 'Sets the sky wallpaper frame for the time of day, then exits.' -Force | Out-Null
+function Register-SkyTask([object[]]$with) {
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $with -Settings $settings -Principal $principal `
+        -Description 'Sets the sky wallpaper frame for the time of day, then exits.' -Force | Out-Null
+}
+try {
+    Register-SkyTask ($triggers + $wake)
+} catch {
+    # Event triggers can be refused on locked-down machines; unlock and logon still catch up.
+    Write-Warning "No wake trigger ($($_.Exception.Message)); the frame catches up at unlock instead."
+    Register-SkyTask $triggers
+}
 
 & $sky apply $frames
 if ($LASTEXITCODE -ne 0) { throw "Setting the wallpaper failed; see $app\sky.log." }
