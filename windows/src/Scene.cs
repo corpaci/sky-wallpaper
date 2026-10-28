@@ -73,6 +73,20 @@ struct Palette
         r.Land = Col.MixOklab(p.Land, q.Land, t);
         return r;
     }
+
+    /// Under a cloud deck: greyer and darker, the sky more than the land.
+    public Palette Overcast(float k)
+    {
+        Palette r;
+        r.Zenith = Grey(Zenith, 0.35f, k);
+        r.Mid = Grey(Mid, 0.25f, k);
+        r.Horizon = Grey(Horizon, 0.2f, k);
+        r.Glow = Grey(Glow, 0.3f, k);
+        r.Land = Grey(Land, 0.2f, k);
+        return r;
+    }
+
+    static RGB Grey(RGB c, float dim, float k) { return Col.Desaturate(c, 0.8f * k) * (1 - dim * k); }
 }
 
 static class Palettes
@@ -167,9 +181,12 @@ sealed class Scene
     readonly float[] snowSlope;  // [x] its slope over ±3% of the height, so shading blends, not splits
     readonly float windowX0, windowX1, windowY0, windowY1;  // the cabin's window
     readonly float[] stars;      // linear RGB, full frame
+    readonly float[] flakes;     // snowflake coverage, full frame
+    readonly uint seed;
 
     public Scene(int width, int height, uint seed)
     {
+        this.seed = seed;
         Width = width;
         Height = height;
         W = width;
@@ -270,6 +287,28 @@ sealed class Scene
                 }
             }
         }
+
+        // Snowflakes: soft dots, the big near ones rarer. Drawn only when it snows.
+        flakes = new float[width * height];
+        var flakeRng = new SplitMix(unchecked(((ulong)seed * 0xd1b54a32d192ed03) | 1));
+        int flakeCount = width * height / 2200;
+        for (int n = 0; n < flakeCount; n++)
+        {
+            float fx = flakeRng.Unit() * W, fy = flakeRng.Unit() * H;
+            float nearness = Col.Pow(flakeRng.Unit(), 3);
+            float bright = 0.55f + 0.45f * flakeRng.Unit();
+            float sigma = (0.6f + 1.8f * nearness) * scale;
+            int reach = (int)Math.Ceiling(3 * sigma);
+            int cxf = (int)fx, cyf = (int)fy;
+            for (int py = Math.Max(cyf - reach, 0); py <= Math.Min(cyf + reach, height - 1); py++)
+            {
+                for (int px = Math.Max(cxf - reach, 0); px <= Math.Min(cxf + reach, width - 1); px++)
+                {
+                    float dx = px + 0.5f - fx, dy = py + 0.5f - fy;
+                    flakes[py * width + px] += bright * Col.Exp(-(dx * dx + dy * dy) / (2 * sigma * sigma));
+                }
+            }
+        }
     }
 
     float Terrain(Layer layer, uint s, float x)
@@ -314,31 +353,60 @@ sealed class Scene
     /// dither per frame.
     public byte[] Render(int minute, SunModel sun, uint salt)
     {
+        return Render(minute, sun, salt, new Weather(Sky.Clear));
+    }
+
+    public byte[] Render(int minute, SunModel sun, uint salt, Weather w)
+    {
         float alt = sun.Altitude(minute);
         float? dayPhase = sun.DayPhase(minute);
         bool evening = dayPhase.HasValue ? dayPhase.Value >= 0.5f : sun.NightPhase(minute) < 0.5f;
         Palette pal = Palettes.At(alt, evening);
+        if (w.Overcast > 0) pal = pal.Overcast(w.Overcast);
         float span = horizonY - 0.14f * H;
 
         // Sun: rises left, sets right; below the horizon it waits at its side.
+        // Cloud and fog veil its disk and glow.
+        float veil = (1 - 0.85f * w.Overcast) * (1 - 0.5f * w.Fog);
         float p = dayPhase.HasValue ? dayPhase.Value : (evening ? 1 : 0);
         float sunX = W * (0.5f + (p - 0.5f) * 0.8f), sunY = horizonY - alt / SunModel.Peak * span;
         float sunR = 0.021f * H;
-        float sunVis = Col.Smoothstep(-1.5f, 0.5f, alt);
+        float sunVis = Col.Smoothstep(-1.5f, 0.5f, alt) * (1 - w.Overcast) * (1 - 0.5f * w.Fog);
         RGB sunColor = Col.Mix(pal.Glow * 1.6f, new RGB(1, 0.97f, 0.9f) * 1.4f, Col.Smoothstep(2, 20, alt));
         float low = Col.Smoothstep(-8, -1, alt) * (1 - Col.Smoothstep(4, 20, alt));
         float day = Col.Smoothstep(0, 15, alt);
-        float gNear = 0.44f * low + 0.28f * day, gFar = 0.40f * low + 0.10f * day, gBand = 0.30f * low;
+        float gNear = (0.44f * low + 0.28f * day) * veil, gFar = (0.40f * low + 0.10f * day) * veil, gBand = 0.30f * low * veil;
         float rNear = 0.06f * H, rFar = 0.32f * H, bandH = 0.07f * H, bandW = 0.55f * W;
 
         // Moon: crosses the night the same way, a fat crescent.
         float q = Math.Min(sun.NightPhase(minute), 1f);
-        float moonVis = dayPhase.HasValue ? 0 : Col.Smoothstep(-1, -8, alt);
+        float moonVis = (dayPhase.HasValue ? 0 : Col.Smoothstep(-1, -8, alt)) * (1 - 0.95f * w.Overcast);
         float moonX = W * (0.5f + (q - 0.5f) * 0.8f), moonY = horizonY - 30 * (float)Math.Sin((float)Math.PI * q) / SunModel.Peak * span;
         float moonR = 0.017f * H;
         RGB moonColor = RGB.Hex(0xf3efe0), moonGlow = RGB.Hex(0x9fb4d8);
 
-        float starVis = Col.Smoothstep(-4, -14, alt);
+        float starVis = Col.Smoothstep(-4, -14, alt) * (1 - w.Overcast);
+
+        // Weather. Clouds: wide, flat shapes from 2-D noise, thinning into the
+        // distance, lit on the side toward the sun (pink-edged at sunset). They
+        // drift through the day. Under overcast they close into a soft deck.
+        RGB cloudLit = Col.MixOklab(pal.Horizon, pal.Glow, 0.5f) * 1.15f;
+        RGB cloudShade = Col.Desaturate(Col.MixOklab(pal.Mid, pal.Zenith, 0.5f), 0.5f) * 0.85f;
+        float cloudEdge = 0.62f - 0.3f * w.Clouds - 0.25f * w.Overcast, cloudSoft = 0.12f + 0.3f * w.Overcast;
+        float cloudStep = 0.02f * H, drift = minute * 0.002f;
+        uint cloudSeed = Col.Hash32(seed ^ 0x51ed270b);
+        float cloudH = H, horizon = horizonY;
+        Func<float, float, float> cloud = (x, y) =>
+        {
+            float n = Col.Fbm2(x / cloudH * 1.6f + drift, y / cloudH * 5.5f, 5, cloudSeed) * 0.5f + 0.5f;
+            return Col.Smoothstep(cloudEdge, cloudEdge + cloudSoft, n) * (1 - Col.Smoothstep(horizon * 0.75f, horizon * 1.02f, y));
+        };
+        RGB fogColor = Col.MixOklab(pal.Horizon, Col.Desaturate(pal.Mid, 0.6f), 0.4f);
+        RGB rainColor = Col.MixOklab(pal.Horizon, new RGB(1, 1, 1), 0.25f);
+        float rainCell = Math.Max(0.0065f * H, 4);
+        uint rainSeed = Col.Hash32(seed ^ 0x2c1b3c6d);
+        RGB flakeColor = Col.MixOklab(pal.Mid, new RGB(1, 1, 1), 0.6f);
+        RGB snowGround = Col.MixOklab(pal.Mid, pal.Horizon, 0.5f) * 1.15f;
         var sky = new RGB[Height];
         for (int y = 0; y < Height; y++)
         {
@@ -400,6 +468,22 @@ sealed class Scene
                         c = Col.Mix(c, moonColor, disk * (1 - shadow));
                     }
                 }
+                if (w.Clouds > 0 && fy < horizonY * 1.02f)
+                {
+                    float cd = cloud(fx, fy);
+                    if (cd > 0)
+                    {
+                        float clx = sunX - fx, cly = sunY - fy;
+                        float len = Math.Max(Col.Sqrt(clx * clx + cly * cly), 1);
+                        float ahead = cloud(fx + clx / len * cloudStep, fy + cly / len * cloudStep);
+                        float light = Col.Clamp01(0.55f + 1.8f * (cd - ahead));
+                        c = Col.Mix(c, Col.Mix(cloudShade, cloudLit, light) + pal.Glow * (g * 0.6f), cd * 0.96f);
+                    }
+                }
+                if (w.Fog > 0)
+                {
+                    c = Col.Mix(c, fogColor, w.Fog * 0.6f * Col.Smoothstep(0.3f * H, horizonY, fy));
+                }
 
                 for (int l = 0; l < Layers.Length; l++)
                 {
@@ -425,6 +509,15 @@ sealed class Scene
                             tone = Col.Mix(tone, snow, amount);
                         }
                     }
+                    if (w.Snow > 0 && !layer.Snow && fy >= gy)
+                    {
+                        // Fresh snow on the ground; the pines above it stay dark.
+                        tone = Col.Mix(tone, Col.Mix(snowGround, fog, layer.Haze * 0.5f), 0.75f * w.Snow);
+                    }
+                    if (w.Fog > 0)
+                    {
+                        tone = Col.Mix(tone, fogColor, w.Fog * (0.9f - 0.12f * l));
+                    }
                     tone = tone + pal.Glow * (g * layer.Haze * 0.8f);  // in-scattered sun
                     c = cov == 1 ? tone : Col.Mix(c, tone, cov);
                 }
@@ -435,6 +528,27 @@ sealed class Scene
                     c = Col.Mix(c, windowColor, inside * windowLight);
                     float wdx = fx - windowX, wdy = fy - windowY;
                     c = c + windowColor * (0.08f * windowLight * Col.Exp(-Col.Sqrt(wdx * wdx + wdy * wdy) / (0.012f * H)));
+                }
+
+                if (w.Rain > 0)
+                {
+                    // Slanted streaks: one possible line per narrow column,
+                    // broken into dashes.
+                    float u = fx + fy * 0.18f;
+                    float col = (float)Math.Floor(u / rainCell);
+                    uint hc = Col.Hash32(unchecked((uint)(int)col ^ rainSeed));
+                    float line = Col.Clamp01(0.9f - Math.Abs(u - (col + 0.2f + 0.6f * Col.Unit(hc)) * rainCell));
+                    if (line > 0)
+                    {
+                        float dash = (float)Math.Floor((fy + Col.Unit(Col.Hash32(hc)) * 977) / (0.04f * H));
+                        if (Col.Unit(Col.Hash32(hc ^ unchecked((uint)(int)dash * 0x27d4eb2f))) < 0.3f)
+                            c = Col.Mix(c, rainColor, line * 0.22f * w.Rain);
+                    }
+                }
+                if (w.Snow > 0)
+                {
+                    float f = flakes[y * width + x];
+                    if (f > 0.002f) c = Col.Mix(c, flakeColor, Math.Min(f * w.Snow, 1f));
                 }
 
                 int o = (y * width + x) * 3;

@@ -39,6 +39,12 @@ func mixOklab(_ x: RGB, _ y: RGB, _ t: Float) -> RGB {
     return fromOklab((lerp(a.0, b.0, t), lerp(a.1, b.1, t), lerp(a.2, b.2, t)))
 }
 
+/// Toward grey at the same lightness: OKLab chroma scaled down by `t`.
+func desaturate(_ c: RGB, _ t: Float) -> RGB {
+    let l = toOklab(c)
+    return fromOklab((l.0, l.1 * (1 - t), l.2 * (1 - t)))
+}
+
 private func toOklab(_ c: RGB) -> (Float, Float, Float) {
     let l = cbrtf(0.4122214708 * c.r + 0.5363325363 * c.g + 0.0514459929 * c.b)
     let m = cbrtf(0.2119034982 * c.r + 0.6806995451 * c.g + 0.1073969566 * c.b)
@@ -85,6 +91,33 @@ func fbm(_ u: Float, octaves: Int, seed: UInt32) -> Float {
     var sum: Float = 0, amp: Float = 1, norm: Float = 0, freq: Float = 1
     for k in 0..<octaves {
         sum += amp * valueNoise(u * freq + Float(k) * 17.31, seed &+ UInt32(k) &* 1013)
+        norm += amp
+        amp *= 0.5
+        freq *= 2.03
+    }
+    return sum / norm
+}
+
+/// 2-D value noise in [-1, 1] with quintic interpolation.
+func valueNoise2(_ u: Float, _ v: Float, _ seed: UInt32) -> Float {
+    let i = floorf(u), j = floorf(v)
+    let fu = u - i, fv = v - j
+    let tu = fu * fu * fu * (fu * (fu * 6 - 15) + 10)
+    let tv = fv * fv * fv * (fv * (fv * 6 - 15) + 10)
+    let ki = UInt32(bitPattern: Int32(i)), kj = UInt32(bitPattern: Int32(j))
+    func corner(_ a: UInt32, _ b: UInt32) -> Float {
+        unit(hash32((a &* 0x9e3779b1) ^ (b &* 0x85ebca6b) ^ seed)) * 2 - 1
+    }
+    let top = lerp(corner(ki, kj), corner(ki &+ 1, kj), tu)
+    let bottom = lerp(corner(ki, kj &+ 1), corner(ki &+ 1, kj &+ 1), tu)
+    return lerp(top, bottom, tv)
+}
+
+/// Fractal sum of 2-D value noise, normalized to roughly [-1, 1].
+func fbm2(_ u: Float, _ v: Float, octaves: Int, seed: UInt32) -> Float {
+    var sum: Float = 0, amp: Float = 1, norm: Float = 0, freq: Float = 1
+    for k in 0..<octaves {
+        sum += amp * valueNoise2(u * freq + Float(k) * 17.31, v * freq + Float(k) * 9.77, seed &+ UInt32(k) &* 1013)
         norm += amp
         amp *= 0.5
         freq *= 2.03

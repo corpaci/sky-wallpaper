@@ -235,6 +235,9 @@ static class Program
         public string Label;
         public int Minute;
         public string Flags = "";
+        public Sky Sky = Sky.Clear;
+
+        public string Name { get { return Label + (Sky == Sky.Clear ? "" : "-" + Weather.Name(Sky)); } }
     }
 
     static int Render(List<string> args)
@@ -246,6 +249,7 @@ static class Program
         bool dryRun = false;
         double? latitude = null, longitude = null;
         int? utcOffset = null;
+        Sky? forcedSky = null;
         for (int i = 0; i < args.Count; i++)
         {
             string flag = args[i];
@@ -279,6 +283,12 @@ static class Program
                     break;
                 case "--date":
                     date = value;
+                    break;
+                case "--sky":
+                    Sky s;
+                    if (!Weather.TryParse(value, out s))
+                        throw new UsageException("--sky wants one of: clear, cloudy, overcast, rain, snow, fog");
+                    forcedSky = s;
                     break;
                 case "--utc-offset":
                     int offset;
@@ -328,6 +338,7 @@ static class Program
         for (int i = 0; i < evening.Length; i++)
             frames.Add(new Frame { Label = evening[i], Minute = sun.MinuteAt(eveningAlt[i], true), Flags = evening[i] == "sunset" ? "primary" : "" });
         frames = frames.OrderBy(f => f.Minute).ToList();
+        if (forcedSky.HasValue) foreach (Frame f in frames) f.Sky = forcedSky.Value;
         for (int i = 1; i < frames.Count; i++)
             if (frames[i].Minute == frames[i - 1].Minute)
                 throw new UsageException(frames[i - 1].Label + " and " + frames[i].Label + " both land on " + Clock(frames[i].Minute) + "; day or night too short for this schedule");
@@ -335,7 +346,7 @@ static class Program
         if (dryRun)
         {
             Console.WriteLine(Header(sizes[0][0], sizes[0][1], sunrise, sunset, dayNote, seed));
-            foreach (Frame f in frames) Console.WriteLine(Clock(f.Minute) + "  " + f.Label);
+            foreach (Frame f in frames) Console.WriteLine(Clock(f.Minute) + "  " + f.Name);
             return 0;
         }
 
@@ -355,8 +366,8 @@ static class Program
             {
                 clock.Restart();
                 Frame f = frames[i];
-                string name = string.Format("{0:D2}-{1}.png", i, f.Label);
-                byte[] pixels = scene.Render(f.Minute, sun, Col.Hash32(unchecked((uint)i + seed)));
+                string name = string.Format("{0:D2}-{1}.png", i, f.Name);
+                byte[] pixels = scene.Render(f.Minute, sun, Col.Hash32(unchecked((uint)i + seed)), new Weather(f.Sky));
                 Png.Write(Path.Combine(dir, name), pixels, width, height);
                 manifest.Add(Clock(f.Minute) + "  " + name + (f.Flags == "" ? "" : "  " + f.Flags));
                 Console.WriteLine("{0}  {1}  sun {2:+0.0;-0.0} deg  {3:F2}s", Clock(f.Minute), name, sun.Altitude(f.Minute), clock.Elapsed.TotalSeconds);

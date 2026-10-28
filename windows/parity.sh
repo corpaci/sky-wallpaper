@@ -13,10 +13,15 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 swift build -c release --quiet --product wallframes
-.build/release/wallframes --size "$size" --sunrise "$sunrise" --sunset "$sunset" --out "$tmp/swift" >/dev/null
-
 # -langversion:5 matches the compiler that ships with Windows.
 csc -nologo -langversion:5 -codepage:65001 -optimize+ -out:"$tmp/sky.exe" windows/src/*.cs
-mono "$tmp/sky.exe" render --size "$size" --sunrise "$sunrise" --sunset "$sunset" --out "$tmp/cs" >/dev/null
 
-swift windows/compare.swift "$tmp/swift" "$tmp/cs/$size"
+# Every kind of sky, so clouds, rain, snow and fog are covered too.
+failed=0
+for sky in clear cloudy overcast rain snow fog; do
+    echo "== $sky"
+    .build/release/wallframes --size "$size" --sunrise "$sunrise" --sunset "$sunset" --sky "$sky" --out "$tmp/swift-$sky" >/dev/null
+    mono "$tmp/sky.exe" render --size "$size" --sunrise "$sunrise" --sunset "$sunset" --sky "$sky" --out "$tmp/cs-$sky" >/dev/null
+    swift windows/compare.swift "$tmp/swift-$sky" "$tmp/cs-$sky/$size" || failed=1
+done
+exit $failed

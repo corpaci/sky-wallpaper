@@ -60,6 +60,13 @@ static class Col
         return FromOklab(Lerp(a[0], b[0], t), Lerp(a[1], b[1], t), Lerp(a[2], b[2], t));
     }
 
+    /// Toward grey at the same lightness: OKLab chroma scaled down by `t`.
+    public static RGB Desaturate(RGB c, float t)
+    {
+        float[] l = ToOklab(c);
+        return FromOklab(l[0], l[1] * (1 - t), l[2] * (1 - t));
+    }
+
     static float[] ToOklab(RGB c)
     {
         float l = Cbrt(0.4122214708f * c.R + 0.5363325363f * c.G + 0.0514459929f * c.B);
@@ -120,6 +127,41 @@ static class Col
         for (int k = 0; k < octaves; k++)
         {
             sum += amp * ValueNoise(u * freq + k * 17.31f, unchecked(seed + (uint)k * 1013));
+            norm += amp;
+            amp *= 0.5f;
+            freq *= 2.03f;
+        }
+        return sum / norm;
+    }
+
+    /// 2-D value noise in [-1, 1] with quintic interpolation.
+    public static float ValueNoise2(float u, float v, uint seed)
+    {
+        float i = (float)Math.Floor(u), j = (float)Math.Floor(v);
+        float fu = u - i, fv = v - j;
+        float tu = fu * fu * fu * (fu * (fu * 6 - 15) + 10);
+        float tv = fv * fv * fv * (fv * (fv * 6 - 15) + 10);
+        unchecked
+        {
+            uint ki = (uint)(int)i, kj = (uint)(int)j;
+            float top = Lerp(Corner(ki, kj, seed), Corner(ki + 1, kj, seed), tu);
+            float bottom = Lerp(Corner(ki, kj + 1, seed), Corner(ki + 1, kj + 1, seed), tu);
+            return Lerp(top, bottom, tv);
+        }
+    }
+
+    static float Corner(uint a, uint b, uint seed)
+    {
+        return Unit(Hash32(unchecked((a * 0x9e3779b1) ^ (b * 0x85ebca6b) ^ seed))) * 2 - 1;
+    }
+
+    /// Fractal sum of 2-D value noise, normalized to roughly [-1, 1].
+    public static float Fbm2(float u, float v, int octaves, uint seed)
+    {
+        float sum = 0, amp = 1, norm = 0, freq = 1;
+        for (int k = 0; k < octaves; k++)
+        {
+            sum += amp * ValueNoise2(u * freq + k * 17.31f, v * freq + k * 9.77f, unchecked(seed + (uint)k * 1013));
             norm += amp;
             amp *= 0.5f;
             freq *= 2.03f;

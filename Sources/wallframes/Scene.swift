@@ -51,6 +51,13 @@ struct Palette {
                 horizon: mixOklab(p.horizon, q.horizon, t), glow: mixOklab(p.glow, q.glow, t),
                 land: mixOklab(p.land, q.land, t))
     }
+
+    /// Under a cloud deck: greyer and darker, the sky more than the land.
+    func overcast(_ k: Float) -> Palette {
+        func grey(_ c: RGB, _ dim: Float) -> RGB { desaturate(c, 0.8 * k) * (1 - dim * k) }
+        return Palette(zenith: grey(zenith, 0.35), mid: grey(mid, 0.25), horizon: grey(horizon, 0.2),
+                       glow: grey(glow, 0.3), land: grey(land, 0.2))
+    }
 }
 
 private func key(_ alt: Float, _ zenith: UInt32, _ mid: UInt32, _ horizon: UInt32,
@@ -130,6 +137,8 @@ struct Scene {
     private let snowSlope: [Float] // [x] its slope over ±3% of the height, so shading blends, not splits
     private let cabin: Cabin
     private let stars: [Float]    // linear RGB, full frame
+    private let flakes: [Float]   // snowflake coverage, full frame
+    private let seed: UInt32
 
     init(width: Int, height: Int, seed: UInt32) {
         self.width = width
@@ -245,35 +254,76 @@ struct Scene {
             }
         }
         stars = starLight
+
+        // Snowflakes: soft dots, the big near ones rarer. Drawn only when it snows.
+        var flakeCover = [Float](repeating: 0, count: width * height)
+        var flakeRng = SplitMix(state: UInt64(seed) &* 0xd1b54a32d192ed03 | 1)
+        for _ in 0..<(width * height / 2200) {
+            let fx = flakeRng.unit() * w, fy = flakeRng.unit() * h
+            let near = powf(flakeRng.unit(), 3)
+            let bright = 0.55 + 0.45 * flakeRng.unit()
+            let sigma = (0.6 + 1.8 * near) * scale
+            let reach = Int((3 * sigma).rounded(.up))
+            let (cx, cy) = (Int(fx), Int(fy))
+            for py in max(cy - reach, 0)...min(cy + reach, height - 1) {
+                for px in max(cx - reach, 0)...min(cx + reach, width - 1) {
+                    let dx = Float(px) + 0.5 - fx, dy = Float(py) + 0.5 - fy
+                    flakeCover[py * width + px] += bright * expf(-(dx * dx + dy * dy) / (2 * sigma * sigma))
+                }
+            }
+        }
+        flakes = flakeCover
+        self.seed = seed
     }
 
     /// One frame as 8-bit sRGB RGBX, dithered. `salt` varies the dither per frame.
-    func render(minute: Int, sun: SunModel, salt: UInt32) -> [UInt8] {
+    func render(minute: Int, sun: SunModel, salt: UInt32, weather w: Weather = Weather(.clear)) -> [UInt8] {
         let alt = sun.altitude(minute)
         let dayPhase = sun.dayPhase(minute)
         let evening = dayPhase.map { $0 >= 0.5 } ?? (sun.nightPhase(minute) < 0.5)
-        let pal = palette(alt: alt, evening: evening)
+        var pal = palette(alt: alt, evening: evening)
+        if w.overcast > 0 { pal = pal.overcast(w.overcast) }
         let span = horizonY - 0.14 * H
 
         // Sun: rises left, sets right; below the horizon it waits at its side.
+        // Cloud and fog veil its disk and glow.
+        let veil = (1 - 0.85 * w.overcast) * (1 - 0.5 * w.fog)
         let p = dayPhase ?? (evening ? 1 : 0)
         let sunX = W * (0.5 + (p - 0.5) * 0.8), sunY = horizonY - alt / sun.peak * span
         let sunR = 0.021 * H
-        let sunVis = smoothstep(-1.5, 0.5, alt)
+        let sunVis = smoothstep(-1.5, 0.5, alt) * (1 - w.overcast) * (1 - 0.5 * w.fog)
         let sunColor = mix(pal.glow * 1.6, RGB(1, 0.97, 0.9) * 1.4, smoothstep(2, 20, alt))
         let low = smoothstep(-8, -1, alt) * (1 - smoothstep(4, 20, alt))
         let day = smoothstep(0, 15, alt)
-        let (gNear, gFar, gBand) = (0.44 * low + 0.28 * day, 0.40 * low + 0.10 * day, 0.30 * low)
+        let (gNear, gFar, gBand) = ((0.44 * low + 0.28 * day) * veil, (0.40 * low + 0.10 * day) * veil, 0.30 * low * veil)
         let (rNear, rFar, bandH, bandW) = (0.06 * H, 0.32 * H, 0.07 * H, 0.55 * W)
 
         // Moon: crosses the night the same way, a fat crescent.
         let q = min(sun.nightPhase(minute), 1)
-        let moonVis = dayPhase == nil ? smoothstep(-1, -8, alt) : 0
+        let moonVis = (dayPhase == nil ? smoothstep(-1, -8, alt) : 0) * (1 - 0.95 * w.overcast)
         let moonX = W * (0.5 + (q - 0.5) * 0.8), moonY = horizonY - 30 * sinf(.pi * q) / sun.peak * span
         let moonR = 0.017 * H
         let moonColor = RGB(hex: 0xf3efe0), moonGlow = RGB(hex: 0x9fb4d8)
 
-        let starVis = smoothstep(-4, -14, alt)
+        let starVis = smoothstep(-4, -14, alt) * (1 - w.overcast)
+
+        // Weather. Clouds: wide, flat shapes from 2-D noise, thinning into the
+        // distance, lit on the side toward the sun (pink-edged at sunset). They
+        // drift through the day. Under overcast they close into a soft deck.
+        let cloudLit = mixOklab(pal.horizon, pal.glow, 0.5) * 1.15
+        let cloudShade = desaturate(mixOklab(pal.mid, pal.zenith, 0.5), 0.5) * 0.85
+        let cloudEdge = 0.62 - 0.3 * w.clouds - 0.25 * w.overcast, cloudSoft = 0.12 + 0.3 * w.overcast
+        let (cloudStep, cloudSeed, drift) = (0.02 * H, hash32(seed ^ 0x51ed270b), Float(minute) * 0.002)
+        let (h, horizon) = (H, horizonY)
+        func cloud(_ x: Float, _ y: Float) -> Float {
+            let n = fbm2(x / h * 1.6 + drift, y / h * 5.5, octaves: 5, seed: cloudSeed) * 0.5 + 0.5
+            return smoothstep(cloudEdge, cloudEdge + cloudSoft, n) * (1 - smoothstep(horizon * 0.75, horizon * 1.02, y))
+        }
+        let fogColor = mixOklab(pal.horizon, desaturate(pal.mid, 0.6), 0.4)
+        let rainColor = mixOklab(pal.horizon, RGB(1, 1, 1), 0.25)
+        let (rainCell, rainSeed) = (max(0.0065 * H, 4), hash32(seed ^ 0x2c1b3c6d))
+        let flakeColor = mixOklab(pal.mid, RGB(1, 1, 1), 0.6)
+        let snowGround = mixOklab(pal.mid, pal.horizon, 0.5) * 1.15
         let sky: [RGB] = (0..<height).map { y in
             let s = clamp01((Float(y) + 0.5) / horizonY)
             return s < 0.55 ? mixOklab(pal.zenith, pal.mid, s / 0.55)
@@ -327,6 +377,19 @@ struct Scene {
                             c = mix(c, moonColor, disk * (1 - shadow))
                         }
                     }
+                    if w.clouds > 0 && fy < horizonY * 1.02 {
+                        let d = cloud(fx, fy)
+                        if d > 0 {
+                            let (lx, ly) = (sunX - fx, sunY - fy)
+                            let len = max((lx * lx + ly * ly).squareRoot(), 1)
+                            let ahead = cloud(fx + lx / len * cloudStep, fy + ly / len * cloudStep)
+                            let light = clamp01(0.55 + 1.8 * (d - ahead))
+                            c = mix(c, mix(cloudShade, cloudLit, light) + pal.glow * (g * 0.6), d * 0.96)
+                        }
+                    }
+                    if w.fog > 0 {
+                        c = mix(c, fogColor, w.fog * 0.6 * smoothstep(0.3 * H, horizonY, fy))
+                    }
 
                     for l in 0..<layerCount {
                         let t0 = (l * width + x) * sub
@@ -349,6 +412,13 @@ struct Scene {
                                 tone = mix(tone, snow, amount)
                             }
                         }
+                        if w.snow > 0 && !layer.snow && fy >= gy {
+                            // Fresh snow on the ground; the pines above it stay dark.
+                            tone = mix(tone, mix(snowGround, fog, layer.haze * 0.5), 0.75 * w.snow)
+                        }
+                        if w.fog > 0 {
+                            tone = mix(tone, fogColor, w.fog * (0.9 - 0.12 * Float(l)))
+                        }
                         tone = tone + pal.glow * (g * layer.haze * 0.8)   // in-scattered sun
                         c = cov == 1 ? tone : mix(c, tone, cov)
                     }
@@ -358,6 +428,25 @@ struct Scene {
                         c = mix(c, windowColor, inside * windowLight)
                         let wdx = fx - windowX, wdy = fy - windowY
                         c = c + windowColor * (0.08 * windowLight * expf(-(wdx * wdx + wdy * wdy).squareRoot() / (0.012 * H)))
+                    }
+
+                    if w.rain > 0 {
+                        // Slanted streaks: one possible line per narrow column,
+                        // broken into dashes.
+                        let u = fx + fy * 0.18
+                        let col = floorf(u / rainCell)
+                        let hc = hash32(UInt32(bitPattern: Int32(col)) ^ rainSeed)
+                        let line = clamp01(0.9 - abs(u - (col + 0.2 + 0.6 * unit(hc)) * rainCell))
+                        if line > 0 {
+                            let dash = floorf((fy + unit(hash32(hc)) * 977) / (0.04 * H))
+                            if unit(hash32(hc ^ (UInt32(bitPattern: Int32(dash)) &* 0x27d4eb2f))) < 0.3 {
+                                c = mix(c, rainColor, line * 0.22 * w.rain)
+                            }
+                        }
+                    }
+                    if w.snow > 0 {
+                        let f = flakes[y * width + x]
+                        if f > 0.002 { c = mix(c, flakeColor, min(f * w.snow, 1)) }
                     }
 
                     let o = (y * width + x) * 4

@@ -48,7 +48,7 @@ func writePNG(_ rgbx: [UInt8], width: Int, height: Int, to url: URL) {
 
 var width = 2560, height = 1664, sunrise = 7 * 60 + 20, sunset = 17 * 60 + 55
 var seed: UInt32 = 7, outDir = "frames", dryRun = false
-var latitude: Double?, longitude: Double?, date: String?, utcOffset: Int?
+var latitude: Double?, longitude: Double?, date: String?, utcOffset: Int?, forcedSky: Sky?
 var args = CommandLine.arguments.dropFirst()
 while let flag = args.popFirst() {
     if flag == "-h" || flag == "--help" { print(usage); exit(0) }
@@ -76,6 +76,9 @@ while let flag = args.popFirst() {
         guard let v = Double(value), (-180...180).contains(v) else { fail("--lon wants degrees east, -180 to 180") }
         longitude = v
     case "--date": date = value
+    case "--sky":
+        guard let s = Sky(rawValue: value) else { fail("--sky wants one of: \(Sky.allCases.map(\.rawValue).joined(separator: ", "))") }
+        forcedSky = s
     case "--utc-offset":
         guard let v = Int(value), (-14 * 60...14 * 60).contains(v) else { fail("--utc-offset wants minutes, e.g. 60") }
         utcOffset = v
@@ -98,6 +101,9 @@ struct Frame {
     let label: String
     let minute: Int
     var flags: [String] = []
+    var sky = Sky.clear
+
+    var name: String { label + (sky == .clear ? "" : "-" + sky.rawValue) }
 }
 
 let sun = SunModel(sunrise: sunrise, sunset: sunset)
@@ -113,11 +119,12 @@ frames.sort { $0.minute < $1.minute }
 for (a, b) in zip(frames, frames.dropFirst()) where a.minute == b.minute {
     fail("\(a.label) and \(b.label) both land on \(clock(a.minute)); day or night too short for this schedule")
 }
+if let forcedSky { for i in frames.indices { frames[i].sky = forcedSky } }
 
 let header = "# wallframes \(width)x\(height), sunrise \(clock(sunrise)), sunset \(clock(sunset))\(dayNote), seed \(seed)"
 if dryRun {
     print(header)
-    for frame in frames { print("\(clock(frame.minute))  \(frame.label)") }
+    for frame in frames { print("\(clock(frame.minute))  \(frame.name)") }
     exit(0)
 }
 
@@ -136,8 +143,8 @@ var manifest = """
     """
 for (i, frame) in frames.enumerated() {
     let t0 = Date()
-    let name = String(format: "%02d-%@.png", i, frame.label)
-    let pixels = scene.render(minute: frame.minute, sun: sun, salt: hash32(UInt32(i) &+ seed))
+    let name = String(format: "%02d-%@.png", i, frame.name)
+    let pixels = scene.render(minute: frame.minute, sun: sun, salt: hash32(UInt32(i) &+ seed), weather: Weather(frame.sky))
     writePNG(pixels, width: width, height: height, to: dir.appendingPathComponent(name))
     manifest += "\(clock(frame.minute))  \(name)\(frame.flags.isEmpty ? "" : "  " + frame.flags.joined(separator: " "))\n"
     print(String(format: "%@  %@  sun %+5.1f°  %.2fs", clock(frame.minute), name,
