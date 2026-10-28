@@ -99,22 +99,37 @@ struct Scene {
         let haze: Float             // 0 = land color, 1 = horizon color
         let mist: Float             // valley mist toward the layer's foot
         let ridged: Bool            // sharp peaks instead of rolling hills
+        let snow: Bool              // the summit: one massif, snow above a ragged line
+        let trees: Float            // pine height in fractions of height; 0 = bare
+        let forest: Float           // share of the ridge that is wooded, roughly
     }
 
+    // Far to near: a snowcapped summit, a rocky middle range, then rounded
+    // wooded hills. The nearest hill carries the cabin.
     static let layers = [
-        Layer(base: 0.610, amp: 0.085, freq: 1.9, haze: 0.72, mist: 0.25, ridged: true),
-        Layer(base: 0.672, amp: 0.075, freq: 1.5, haze: 0.52, mist: 0.30, ridged: true),
-        Layer(base: 0.740, amp: 0.065, freq: 1.2, haze: 0.34, mist: 0.30, ridged: false),
-        Layer(base: 0.815, amp: 0.065, freq: 0.95, haze: 0.18, mist: 0.24, ridged: false),
-        Layer(base: 0.905, amp: 0.055, freq: 0.75, haze: 0.00, mist: 0.12, ridged: false),
+        Layer(base: 0.600, amp: 0.120, freq: 1.3, haze: 0.66, mist: 0.25, ridged: true, snow: true, trees: 0, forest: 0),
+        Layer(base: 0.680, amp: 0.060, freq: 2.2, haze: 0.48, mist: 0.30, ridged: true, snow: false, trees: 0, forest: 0),
+        Layer(base: 0.750, amp: 0.060, freq: 1.1, haze: 0.32, mist: 0.30, ridged: false, snow: false, trees: 0.011, forest: 0.55),
+        Layer(base: 0.825, amp: 0.055, freq: 0.9, haze: 0.17, mist: 0.24, ridged: false, snow: false, trees: 0.019, forest: 0.6),
+        Layer(base: 0.910, amp: 0.045, freq: 0.7, haze: 0.00, mist: 0.12, ridged: false, snow: false, trees: 0.034, forest: 0.65),
     ]
+    static let sub = 4  // silhouette samples per pixel column, for clean tree edges
+
+    /// A small house on the nearest hill; its window lights up after sunset.
+    struct Cabin {
+        let x, halfWidth: Float
+        let window: (x0: Float, x1: Float, y0: Float, y1: Float)
+    }
 
     let width: Int, height: Int
     private let W: Float, H: Float
-    private let horizonY: Float  // where altitude 0 sits
-    private let ridge: [Float]   // [layer * width + x] ridge-line y
-    private let edge: [Float]    // [layer * width + x] 1/√(1+slope²), for antialiasing
-    private let stars: [Float]   // linear RGB, full frame
+    private let horizonY: Float   // where altitude 0 sits
+    private let ground: [Float]   // [layer * width + x] terrain line y, trees excluded
+    private let top: [Float]      // [(layer * width + x) * sub + s] silhouette y, trees and cabin included
+    private let snowLine: [Float] // [x] for the snowy layer
+    private let snowSlope: [Float] // [x] its slope over ±3% of the height, so shading blends, not splits
+    private let cabin: Cabin
+    private let stars: [Float]    // linear RGB, full frame
 
     init(width: Int, height: Int, seed: UInt32) {
         self.width = width
@@ -122,28 +137,88 @@ struct Scene {
         (W, H) = (Float(width), Float(height))
         horizonY = 0.64 * H
 
-        let (w, h, horizon) = (W, H, horizonY)
+        let (w, h, horizon, sub) = (W, H, horizonY, Self.sub)
 
-        var ridgeY = [Float](repeating: 0, count: Self.layers.count * width)
-        var edgeK = ridgeY
+        func terrain(_ layer: Layer, _ s: UInt32, _ x: Float) -> Float {
+            let u = (x - w / 2) / h * layer.freq
+            let shape: Float
+            if layer.snow {
+                // Ridged multifractal, domain-warped so crests lean, on a slow
+                // swell that lifts one massif above the rest.
+                let warp = 0.25 * fbm(u * 0.6, octaves: 2, seed: s ^ 0x27d4eb2f)
+                shape = 2.4 * ridged(u + warp, octaves: 6, seed: s) - 0.7
+                    + 0.6 * fbm(u * 0.35, octaves: 2, seed: s ^ 0x165667b1)
+            } else if layer.ridged {
+                shape = 0.75 * (0.8 * (1 - 2.4 * abs(fbm(u, octaves: 4, seed: s))) + 0.25 * fbm(u * 7, octaves: 3, seed: s ^ 0x5bd1e995))
+            } else {
+                shape = 1.5 * fbm(u, octaves: 3, seed: s)  // few octaves: soft, rounded hills
+            }
+            return (layer.base - layer.amp * shape) * h
+        }
+
+        var groundY = [Float](repeating: 0, count: Self.layers.count * width)
+        var topY = [Float](repeating: 0, count: Self.layers.count * width * sub)
+        var snow = [Float](repeating: 0, count: width)
+        var slopes = [Float](repeating: 0, count: width)
+        let near = Self.layers.count - 1
+        let cabinX = 0.73 * w, cabinHalf = 0.016 * h
+
         for (l, layer) in Self.layers.enumerated() {
             let s = hash32(seed &* 0x2545f491 &+ UInt32(l))
-            func y(_ x: Float) -> Float {
-                let u = (x - w / 2) / h * layer.freq
-                let shape = layer.ridged
-                    ? 0.8 * (1 - 2.4 * abs(fbm(u, octaves: 4, seed: s))) + 0.25 * fbm(u * 7, octaves: 3, seed: s ^ 0x5bd1e995)
-                    : 1.5 * fbm(u, octaves: 5, seed: s)
-                return (layer.base - layer.amp * shape) * h
+            let row = l * width
+            for x in 0..<width { groundY[row + x] = terrain(layer, s, Float(x) + 0.5) }
+            for i in 0..<(width * sub) { topY[row * sub + i] = terrain(layer, s, (Float(i) + 0.5) / Float(sub)) }
+            if layer.snow {
+                let r = max(Int(0.03 * h), 1)
+                for x in 0..<width {
+                    snow[x] = (layer.base - layer.amp * 0.42) * h + 0.010 * h * fbm(Float(x) / h * 14, octaves: 3, seed: s ^ 0x7f4a7c15)
+                    slopes[x] = (terrain(layer, s, Float(x + r) + 0.5) - terrain(layer, s, Float(x - r) + 0.5)) / Float(2 * r)
+                }
             }
-            for x in 0..<width {
-                let fx = Float(x) + 0.5
-                let slope = (y(fx + 1) - y(fx - 1)) / 2
-                ridgeY[l * width + x] = y(fx)
-                edgeK[l * width + x] = 1 / (1 + slope * slope).squareRoot()
+            guard layer.trees > 0 else { continue }
+
+            // Pines in woods and clearings along the ridge, tallest in front.
+            var rng = SplitMix(state: UInt64(s) &* 0x9e3779b97f4a7c15 | 1)
+            let tallest = layer.trees * h
+            var tx = -tallest
+            while tx < w + tallest {
+                let th = tallest * (0.6 + 0.7 * rng.unit())
+                let hw = th * 0.24
+                tx += hw * (0.9 + 1.4 * rng.unit())
+                let wood = fbm(tx / h * 2.2, octaves: 2, seed: s ^ 0x9e3779b9) * 0.5 + 0.5
+                if wood > layer.forest { continue }
+                if l == near && abs(tx - cabinX) < cabinHalf + 2 * hw { continue }
+                let base = terrain(layer, s, tx) + 0.06 * th
+                let i0 = max(Int(((tx - hw) * Float(sub)).rounded(.down)), 0)
+                let i1 = min(Int(((tx + hw) * Float(sub)).rounded(.up)), width * sub - 1)
+                guard i0 <= i1 else { continue }
+                for i in i0...i1 {
+                    let y = pine((Float(i) + 0.5) / Float(sub) - tx, height: th, halfWidth: hw, base: base)
+                    topY[row * sub + i] = min(topY[row * sub + i], y)
+                }
             }
         }
-        ridge = ridgeY
-        edge = edgeK
+
+        // The cabin: walls, pitched roof, chimney; one window.
+        let groundAt = groundY[near * width + min(max(Int(cabinX), 0), width - 1)]
+        let base = groundAt + 0.004 * h
+        let (wallH, roofH) = (0.020 * h, 0.017 * h)
+        for i in 0..<(width * sub) {
+            let dx = abs((Float(i) + 0.5) / Float(sub) - cabinX)
+            guard dx <= cabinHalf * 1.08 else { continue }
+            var y = base - wallH - roofH + dx / (cabinHalf * 1.08) * roofH
+            let cx = (Float(i) + 0.5) / Float(sub) - cabinX
+            if cx > 0.36 * cabinHalf && cx < 0.62 * cabinHalf { y = min(y, base - wallH - 0.95 * roofH) }
+            topY[(near * width) * sub + i] = min(topY[(near * width) * sub + i], y)
+        }
+        cabin = Cabin(x: cabinX, halfWidth: cabinHalf,
+                      window: (cabinX - 0.55 * cabinHalf, cabinX - 0.15 * cabinHalf,
+                               base - 0.72 * wallH, base - 0.38 * wallH))
+
+        ground = groundY
+        top = topY
+        snowLine = snow
+        snowSlope = slopes
 
         // Stars: mostly faint, a few bright, thinning toward the horizon.
         var starLight = [Float](repeating: 0, count: width * height * 3)
@@ -206,7 +281,17 @@ struct Scene {
         }
         let fog = pal.horizon
         let tones = Self.layers.map { mixOklab(pal.land, fog, $0.haze) }
-        let layerCount = Self.layers.count, mistDepth = 0.10 * H
+        let layerCount = Self.layers.count, mistDepth = 0.10 * H, sub = Self.sub
+
+        // Snow takes the sky's light: white-blue by day, alpenglow pink at
+        // sunrise and sunset, dim blue at night. Faces toward the sun are
+        // brighter while it is up.
+        let snowLight = mixOklab(pal.mid, pal.glow, 0.5) * 1.25
+        let relief = 0.35 * smoothstep(-6, 3, alt)
+        let windowLight = smoothstep(-0.5, -5, alt)
+        let windowColor = RGB(hex: 0xffb35c) * 1.3
+        let (wx0, wx1, wy0, wy1) = cabin.window
+        let (windowX, windowY) = ((wx0 + wx1) / 2, (wy0 + wy1) / 2)
 
         var out = [UInt8](repeating: 255, count: width * height * 4)
         out.withUnsafeMutableBufferPointer { buf in
@@ -244,13 +329,35 @@ struct Scene {
                     }
 
                     for l in 0..<layerCount {
-                        let ry = ridge[l * width + x]
-                        let cov = clamp01((fy - ry) * edge[l * width + x] + 0.5)
+                        let t0 = (l * width + x) * sub
+                        var cov: Float = 0
+                        for s in 0..<sub { cov += clamp01(fy - top[t0 + s] + 0.5) }
+                        cov /= Float(sub)
                         if cov == 0 { continue }
                         let layer = Self.layers[l]
-                        var tone = mix(tones[l], fog, layer.mist * smoothstep(0, mistDepth, fy - ry))
+                        let gy = ground[l * width + x]
+                        var tone = mix(tones[l], fog, layer.mist * smoothstep(0, mistDepth, fy - gy))
+                        if layer.snow {
+                            let amount = smoothstep(snowLine[x] + 3, snowLine[x] - 3, fy)
+                            if amount > 0 {
+                                // Snow faces turned to the sun are brighter: the face
+                                // normal against the direction to the sun.
+                                let slope = snowSlope[x]
+                                let (lx, ly) = (sunX - fx, sunY - fy)
+                                let facing = (slope * lx - ly) / ((1 + slope * slope) * (lx * lx + ly * ly)).squareRoot()
+                                let snow = mix(snowLight * (1 + relief * (clamp01(facing) - 0.5) * 2), fog, layer.haze * 0.55)
+                                tone = mix(tone, snow, amount)
+                            }
+                        }
                         tone = tone + pal.glow * (g * layer.haze * 0.8)   // in-scattered sun
                         c = cov == 1 ? tone : mix(c, tone, cov)
+                    }
+
+                    if windowLight > 0 {
+                        let inside = clamp01(min(min(fx - wx0, wx1 - fx), min(fy - wy0, wy1 - fy)) + 0.5)
+                        c = mix(c, windowColor, inside * windowLight)
+                        let wdx = fx - windowX, wdy = fy - windowY
+                        c = c + windowColor * (0.08 * windowLight * expf(-(wdx * wdx + wdy * wdy).squareRoot() / (0.012 * H)))
                     }
 
                     let o = (y * width + x) * 4
@@ -263,6 +370,19 @@ struct Scene {
         }
         return out
     }
+}
+
+/// Top edge of a three-tier pine at `dx` from its trunk: stacked triangles,
+/// each wider than the one above, so the outline steps out like a fir.
+private func pine(_ dx: Float, height th: Float, halfWidth hw: Float, base: Float) -> Float {
+    let adx = abs(dx)
+    var y = Float.infinity
+    for k in 0..<3 {
+        let tier = hw * (0.5 + 0.25 * Float(k))
+        guard adx <= tier else { continue }
+        y = min(y, base - th + Float(k) * 0.24 * th + adx / tier * 0.42 * th)
+    }
+    return y
 }
 
 /// Linear → sRGB 8-bit with a soft highlight shoulder and ±1 LSB triangular

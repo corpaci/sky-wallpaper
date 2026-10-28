@@ -127,8 +127,8 @@ static class Palettes
     }
 }
 
-/// A layered ridge landscape under a sky. Geometry is fixed per seed; only
-/// light changes between frames.
+/// A layered landscape under a sky. Geometry is fixed per seed; only light
+/// changes between frames.
 sealed class Scene
 {
     sealed class Layer
@@ -137,27 +137,36 @@ sealed class Scene
         public readonly float Haze;             // 0 = land color, 1 = horizon color
         public readonly float Mist;             // valley mist toward the layer's foot
         public readonly bool Ridged;            // sharp peaks instead of rolling hills
+        public readonly bool Snow;              // the summit: one massif, snow above a ragged line
+        public readonly float Trees;            // pine height in fractions of height; 0 = bare
+        public readonly float Forest;           // share of the ridge that is wooded, roughly
 
-        public Layer(float b, float amp, float freq, float haze, float mist, bool ridged)
+        public Layer(float b, float amp, float freq, float haze, float mist, bool ridged, bool snow, float trees, float forest)
         {
-            Base = b; Amp = amp; Freq = freq; Haze = haze; Mist = mist; Ridged = ridged;
+            Base = b; Amp = amp; Freq = freq; Haze = haze; Mist = mist; Ridged = ridged; Snow = snow; Trees = trees; Forest = forest;
         }
     }
 
+    // Far to near: a snowcapped summit, a rocky middle range, then rounded
+    // wooded hills. The nearest hill carries the cabin.
     static readonly Layer[] Layers = {
-        new Layer(0.610f, 0.085f, 1.9f, 0.72f, 0.25f, true),
-        new Layer(0.672f, 0.075f, 1.5f, 0.52f, 0.30f, true),
-        new Layer(0.740f, 0.065f, 1.2f, 0.34f, 0.30f, false),
-        new Layer(0.815f, 0.065f, 0.95f, 0.18f, 0.24f, false),
-        new Layer(0.905f, 0.055f, 0.75f, 0.00f, 0.12f, false),
+        new Layer(0.600f, 0.120f, 1.3f, 0.66f, 0.25f, true, true, 0, 0),
+        new Layer(0.680f, 0.060f, 2.2f, 0.48f, 0.30f, true, false, 0, 0),
+        new Layer(0.750f, 0.060f, 1.1f, 0.32f, 0.30f, false, false, 0.011f, 0.55f),
+        new Layer(0.825f, 0.055f, 0.9f, 0.17f, 0.24f, false, false, 0.019f, 0.6f),
+        new Layer(0.910f, 0.045f, 0.7f, 0.00f, 0.12f, false, false, 0.034f, 0.65f),
     };
+    const int Sub = 4;  // silhouette samples per pixel column, for clean tree edges
 
     public readonly int Width, Height;
     readonly float W, H;
-    readonly float horizonY;  // where altitude 0 sits
-    readonly float[] ridge;   // [layer * width + x] ridge-line y
-    readonly float[] edge;    // [layer * width + x] 1/√(1+slope²), for antialiasing
-    readonly float[] stars;   // linear RGB, full frame
+    readonly float horizonY;     // where altitude 0 sits
+    readonly float[] ground;     // [layer * width + x] terrain line y, trees excluded
+    readonly float[] top;        // [(layer * width + x) * Sub + s] silhouette y, trees and cabin included
+    readonly float[] snowLine;   // [x] for the snowy layer
+    readonly float[] snowSlope;  // [x] its slope over ±3% of the height, so shading blends, not splits
+    readonly float windowX0, windowX1, windowY0, windowY1;  // the cabin's window
+    readonly float[] stars;      // linear RGB, full frame
 
     public Scene(int width, int height, uint seed)
     {
@@ -167,38 +176,90 @@ sealed class Scene
         H = height;
         horizonY = 0.64f * H;
 
-        ridge = new float[Layers.Length * width];
-        edge = new float[Layers.Length * width];
+        ground = new float[Layers.Length * width];
+        top = new float[Layers.Length * width * Sub];
+        snowLine = new float[width];
+        snowSlope = new float[width];
+        int near = Layers.Length - 1;
+        float cabinX = 0.73f * W, cabinHalf = 0.016f * H;
+
         for (int l = 0; l < Layers.Length; l++)
         {
+            Layer layer = Layers[l];
             uint s = Col.Hash32(unchecked(seed * 0x2545f491 + (uint)l));
-            for (int x = 0; x < width; x++)
+            int row = l * width;
+            for (int x = 0; x < width; x++) ground[row + x] = Terrain(layer, s, x + 0.5f);
+            for (int i = 0; i < width * Sub; i++) top[row * Sub + i] = Terrain(layer, s, (i + 0.5f) / Sub);
+            if (layer.Snow)
             {
-                float fx = x + 0.5f;
-                float slope = (RidgeY(Layers[l], s, fx + 1) - RidgeY(Layers[l], s, fx - 1)) / 2;
-                ridge[l * width + x] = RidgeY(Layers[l], s, fx);
-                edge[l * width + x] = 1 / Col.Sqrt(1 + slope * slope);
+                int r = Math.Max((int)(0.03f * H), 1);
+                for (int x = 0; x < width; x++)
+                {
+                    snowLine[x] = (layer.Base - layer.Amp * 0.42f) * H + 0.010f * H * Col.Fbm(x / H * 14, 3, s ^ 0x7f4a7c15);
+                    snowSlope[x] = (Terrain(layer, s, x + r + 0.5f) - Terrain(layer, s, x - r + 0.5f)) / (2 * r);
+                }
+            }
+            if (layer.Trees <= 0) continue;
+
+            // Pines in woods and clearings along the ridge, tallest in front.
+            var rng = new SplitMix(unchecked(((ulong)s * 0x9e3779b97f4a7c15) | 1));
+            float tallest = layer.Trees * H;
+            float tx = -tallest;
+            while (tx < W + tallest)
+            {
+                float th = tallest * (0.6f + 0.7f * rng.Unit());
+                float hw = th * 0.24f;
+                tx += hw * (0.9f + 1.4f * rng.Unit());
+                float wood = Col.Fbm(tx / H * 2.2f, 2, s ^ 0x9e3779b9) * 0.5f + 0.5f;
+                if (wood > layer.Forest) continue;
+                if (l == near && Math.Abs(tx - cabinX) < cabinHalf + 2 * hw) continue;
+                float b = Terrain(layer, s, tx) + 0.06f * th;
+                int i0 = Math.Max((int)Math.Floor((tx - hw) * Sub), 0);
+                int i1 = Math.Min((int)Math.Ceiling((tx + hw) * Sub), width * Sub - 1);
+                for (int i = i0; i <= i1; i++)
+                {
+                    float y = Pine((i + 0.5f) / Sub - tx, th, hw, b);
+                    top[row * Sub + i] = Math.Min(top[row * Sub + i], y);
+                }
             }
         }
 
+        // The cabin: walls, pitched roof, chimney; one window.
+        float groundAt = ground[near * width + Math.Min(Math.Max((int)cabinX, 0), width - 1)];
+        float cabinBase = groundAt + 0.004f * H;
+        float wallH = 0.020f * H, roofH = 0.017f * H;
+        for (int i = 0; i < width * Sub; i++)
+        {
+            float cx = (i + 0.5f) / Sub - cabinX;
+            float dx = Math.Abs(cx);
+            if (dx > cabinHalf * 1.08f) continue;
+            float y = cabinBase - wallH - roofH + dx / (cabinHalf * 1.08f) * roofH;
+            if (cx > 0.36f * cabinHalf && cx < 0.62f * cabinHalf) y = Math.Min(y, cabinBase - wallH - 0.95f * roofH);
+            top[near * width * Sub + i] = Math.Min(top[near * width * Sub + i], y);
+        }
+        windowX0 = cabinX - 0.55f * cabinHalf;
+        windowX1 = cabinX - 0.15f * cabinHalf;
+        windowY0 = cabinBase - 0.72f * wallH;
+        windowY1 = cabinBase - 0.38f * wallH;
+
         // Stars: mostly faint, a few bright, thinning toward the horizon.
         stars = new float[width * height * 3];
-        var rng = new SplitMix(unchecked((ulong)seed * 0x9e3779b97f4a7c15));
+        var starRng = new SplitMix(unchecked((ulong)seed * 0x9e3779b97f4a7c15));
         float scale = H / 1664;
         int count = width * height / 4500;
         for (int n = 0; n < count; n++)
         {
-            float sx = rng.Unit() * W;
-            float sy = Col.Pow(rng.Unit(), 1.3f) * horizonY * 0.98f;
-            float mag = Col.Pow(rng.Unit(), 4);
-            RGB tint = Col.Mix(RGB.Hex(0xc9d6ff), RGB.Hex(0xfff1d6), rng.Unit())
+            float sx = starRng.Unit() * W;
+            float sy = Col.Pow(starRng.Unit(), 1.3f) * horizonY * 0.98f;
+            float mag = Col.Pow(starRng.Unit(), 4);
+            RGB tint = Col.Mix(RGB.Hex(0xc9d6ff), RGB.Hex(0xfff1d6), starRng.Unit())
                 * ((0.05f + 0.9f * mag) * Col.Smoothstep(horizonY, horizonY * 0.55f, sy));
             float sigma = (0.55f + 0.9f * mag) * scale;
             int reach = (int)Math.Ceiling(3 * sigma);
-            int cx = (int)sx, cy = (int)sy;
-            for (int py = Math.Max(cy - reach, 0); py <= Math.Min(cy + reach, height - 1); py++)
+            int cxs = (int)sx, cys = (int)sy;
+            for (int py = Math.Max(cys - reach, 0); py <= Math.Min(cys + reach, height - 1); py++)
             {
-                for (int px = Math.Max(cx - reach, 0); px <= Math.Min(cx + reach, width - 1); px++)
+                for (int px = Math.Max(cxs - reach, 0); px <= Math.Min(cxs + reach, width - 1); px++)
                 {
                     float dx = px + 0.5f - sx, dy = py + 0.5f - sy;
                     float k = Col.Exp(-(dx * dx + dy * dy) / (2 * sigma * sigma));
@@ -211,13 +272,42 @@ sealed class Scene
         }
     }
 
-    float RidgeY(Layer layer, uint s, float x)
+    float Terrain(Layer layer, uint s, float x)
     {
         float u = (x - W / 2) / H * layer.Freq;
-        float shape = layer.Ridged
-            ? 0.8f * (1 - 2.4f * Math.Abs(Col.Fbm(u, 4, s))) + 0.25f * Col.Fbm(u * 7, 3, s ^ 0x5bd1e995)
-            : 1.5f * Col.Fbm(u, 5, s);
+        float shape;
+        if (layer.Snow)
+        {
+            // Ridged multifractal, domain-warped so crests lean, on a slow
+            // swell that lifts one massif above the rest.
+            float warp = 0.25f * Col.Fbm(u * 0.6f, 2, s ^ 0x27d4eb2f);
+            shape = 2.4f * Col.Ridged(u + warp, 6, s) - 0.7f
+                + 0.6f * Col.Fbm(u * 0.35f, 2, s ^ 0x165667b1);
+        }
+        else if (layer.Ridged)
+        {
+            shape = 0.75f * (0.8f * (1 - 2.4f * Math.Abs(Col.Fbm(u, 4, s))) + 0.25f * Col.Fbm(u * 7, 3, s ^ 0x5bd1e995));
+        }
+        else
+        {
+            shape = 1.5f * Col.Fbm(u, 3, s);  // few octaves: soft, rounded hills
+        }
         return (layer.Base - layer.Amp * shape) * H;
+    }
+
+    /// Top edge of a three-tier pine at `dx` from its trunk: stacked triangles,
+    /// each wider than the one above, so the outline steps out like a fir.
+    static float Pine(float dx, float th, float hw, float b)
+    {
+        float adx = Math.Abs(dx);
+        float y = float.PositiveInfinity;
+        for (int k = 0; k < 3; k++)
+        {
+            float tier = hw * (0.5f + 0.25f * k);
+            if (adx > tier) continue;
+            y = Math.Min(y, b - th + k * 0.24f * th + adx / tier * 0.42f * th);
+        }
+        return y;
     }
 
     /// One frame as 8-bit sRGB, 3 bytes per pixel, dithered. `salt` varies the
@@ -262,6 +352,16 @@ sealed class Scene
         float mistDepth = 0.10f * H;
         int width = Width;
 
+        // Snow takes the sky's light: white-blue by day, alpenglow pink at
+        // sunrise and sunset, dim blue at night. Faces toward the sun are
+        // brighter while it is up.
+        RGB snowLight = Col.MixOklab(pal.Mid, pal.Glow, 0.5f) * 1.25f;
+        float relief = 0.35f * Col.Smoothstep(-6, 3, alt);
+        float windowLight = Col.Smoothstep(-0.5f, -5, alt);
+        RGB windowColor = RGB.Hex(0xffb35c) * 1.3f;
+        float wx0 = windowX0, wx1 = windowX1, wy0 = windowY0, wy1 = windowY1;
+        float windowX = (wx0 + wx1) / 2, windowY = (wy0 + wy1) / 2;
+
         var px = new byte[Width * Height * 3];
         Parallel.For(0, Height, y =>
         {
@@ -303,13 +403,38 @@ sealed class Scene
 
                 for (int l = 0; l < Layers.Length; l++)
                 {
-                    float ry = ridge[l * width + x];
-                    float cov = Col.Clamp01((fy - ry) * edge[l * width + x] + 0.5f);
+                    int t0 = (l * width + x) * Sub;
+                    float cov = 0;
+                    for (int s = 0; s < Sub; s++) cov += Col.Clamp01(fy - top[t0 + s] + 0.5f);
+                    cov /= Sub;
                     if (cov == 0) continue;
                     Layer layer = Layers[l];
-                    RGB tone = Col.Mix(tones[l], fog, layer.Mist * Col.Smoothstep(0, mistDepth, fy - ry));
+                    float gy = ground[l * width + x];
+                    RGB tone = Col.Mix(tones[l], fog, layer.Mist * Col.Smoothstep(0, mistDepth, fy - gy));
+                    if (layer.Snow)
+                    {
+                        float amount = Col.Smoothstep(snowLine[x] + 3, snowLine[x] - 3, fy);
+                        if (amount > 0)
+                        {
+                            // Snow faces turned to the sun are brighter: the face
+                            // normal against the direction to the sun.
+                            float slope = snowSlope[x];
+                            float lx = sunX - fx, ly = sunY - fy;
+                            float facing = (slope * lx - ly) / Col.Sqrt((1 + slope * slope) * (lx * lx + ly * ly));
+                            RGB snow = Col.Mix(snowLight * (1 + relief * (Col.Clamp01(facing) - 0.5f) * 2), fog, layer.Haze * 0.55f);
+                            tone = Col.Mix(tone, snow, amount);
+                        }
+                    }
                     tone = tone + pal.Glow * (g * layer.Haze * 0.8f);  // in-scattered sun
                     c = cov == 1 ? tone : Col.Mix(c, tone, cov);
+                }
+
+                if (windowLight > 0)
+                {
+                    float inside = Col.Clamp01(Math.Min(Math.Min(fx - wx0, wx1 - fx), Math.Min(fy - wy0, wy1 - fy)) + 0.5f);
+                    c = Col.Mix(c, windowColor, inside * windowLight);
+                    float wdx = fx - windowX, wdy = fy - windowY;
+                    c = c + windowColor * (0.08f * windowLight * Col.Exp(-Col.Sqrt(wdx * wdx + wdy * wdy) / (0.012f * H)));
                 }
 
                 int o = (y * width + x) * 3;
