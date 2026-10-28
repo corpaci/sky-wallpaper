@@ -9,11 +9,11 @@ sunset and hourly weather.
 ![Cloudy, overcast, rain, snow and fog](docs/weather.jpg)
 
 **Why it's cheap:** the desktop shows a still image and swaps it at set
-times. Nothing animates and nothing stays running. macOS swaps the frames
-itself (a dynamic HEIC). On Windows, Task Scheduler starts a tiny helper at
-each switch time; it sets the frame and exits. With location or weather on,
-the day is rendered once, shortly after midnight: about a minute of
-low-priority CPU.
+times; nothing animates. macOS swaps the frames itself (a dynamic HEIC). On
+Windows, Task Scheduler starts a tiny helper at each switch time; it sets the
+frame and exits. With location or weather on, the day is rendered once,
+shortly after midnight: about a minute of low-priority CPU. On macOS, a small
+helper also stays loaded, but asleep: it wakes only when you switch desktops.
 
 No dependencies. Same inputs, same frames.
 
@@ -37,8 +37,11 @@ mac/install.sh --lat 48.2 --lon 16.4
 - A background job (launchd) runs at 00:05, at login, and on wake if it
   missed 00:05. It renders the day for each screen, packs it and sets it.
   The log is at `~/Library/Application Support/SkyWallpaper/daily.log`.
-- With several desktops (Spaces), macOS only lets it set the ones showing.
-  The others catch up when they're showing during a run.
+- macOS only lets a program set the desktop (Space) that's showing, and
+  full-screen apps count as desktops. So a small helper stays loaded with no
+  timers: when you switch desktops, it puts today's sky on the one that comes
+  into view. It uses about 30 MB of memory and no CPU while idle; its log is
+  `follow.log` in the same folder.
 - `mac/uninstall.sh` removes it all and puts your previous wallpaper back.
 
 **Static (fixed times, nothing installed):**
@@ -142,9 +145,10 @@ tests/daylight.sh     # sunrise and sunset against published times
 
 ## Status
 
-- **macOS:** the daily job is installed and works on the author's Mac, and
-  the wallpaper stays dynamic. Still open: whether macOS ever trims its own
-  copies of past days' wallpapers, and the first 00:05 run.
+- **macOS:** the daily job and the desktop helper are installed and work on
+  the author's Mac, and the wallpaper stays dynamic. Still open: whether
+  macOS ever trims its own copies of past days' wallpapers, and the first
+  00:05 run.
 - **Windows:** the earlier version runs on a real PC. The daily `tick`
   (rendering, re-registering the task, weather) compiles and its task XML
   validates, but it hasn't run on Windows yet.

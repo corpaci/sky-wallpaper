@@ -16,13 +16,17 @@ func displayID(_ screen: NSScreen) -> String {
 }
 
 /// Sets each screen to the wallpaper made for its size, or the closest aspect
-/// ratio (larger first) if none was; the HEIC fills the screen.
-func setWallpapers(_ files: [URL]) {
+/// ratio (larger first) if none was; the HEIC fills the screen. macOS applies
+/// it to the Space showing on that screen only. With `onlyChanges`, screens
+/// already showing their file are left alone. Returns what was set.
+@discardableResult
+func setWallpapers(_ files: [URL], onlyChanges: Bool = false) throws -> [String] {
     let sized = files.map { url -> (url: URL, width: Int, height: Int) in
         let info = readDesktopInfo(url)
         return (url, info.width, info.height)
     }
-    guard !sized.isEmpty else { fail("--set needs at least one file") }
+    guard !sized.isEmpty else { return [] }
+    var done: [String] = []
     for (screen, width, height) in screens() {
         let aspect = log(Double(width) / Double(height))
         let best = sized.min { a, b in
@@ -33,13 +37,63 @@ func setWallpapers(_ files: [URL]) {
             }
             return key(a) < key(b)
         }!
-        do {
-            try NSWorkspace.shared.setDesktopImageURL(best.url, for: screen, options: [
-                .imageScaling: NSImageScaling.scaleProportionallyUpOrDown.rawValue, .allowClipping: true,
-            ])
-        } catch { fail("cannot set the wallpaper on \(width)x\(height): \(error.localizedDescription)") }
-        print("\(width)x\(height): \(best.url.lastPathComponent)")
+        if onlyChanges,
+           NSWorkspace.shared.desktopImageURL(for: screen)?.standardizedFileURL.path == best.url.standardizedFileURL.path {
+            continue
+        }
+        try NSWorkspace.shared.setDesktopImageURL(best.url, for: screen, options: [
+            .imageScaling: NSImageScaling.scaleProportionallyUpOrDown.rawValue, .allowClipping: true,
+        ])
+        done.append("\(width)x\(height): \(best.url.lastPathComponent)")
     }
+    return done
+}
+
+/// Keeps every desktop on today's sky. macOS can only set the Space that is
+/// showing, and with full-screen apps that is often not a desktop at all; so
+/// whenever you switch Spaces, wake the Mac, come back to your session or
+/// change screens, each screen gets the newest sky in `dir` unless it shows
+/// it already. Event-driven: no timers, asleep in between.
+func follow(_ dir: URL) -> Never {
+    func say(_ line: String) {
+        FileHandle.standardOutput.write(Data("\(Date().formatted(.iso8601)) \(line)\n".utf8))
+    }
+    // sky-WIDTHxHEIGHT-yyyy-MM-dd-HHmm.heic, as daily.sh names them: the
+    // newest stamp is the current day's set.
+    func newest() -> [URL] {
+        let stamped = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).compactMap { name -> (String, String)? in
+            guard name.hasPrefix("sky-"), name.hasSuffix(".heic"), name.count > 24 else { return nil }
+            return (String(name.dropLast(5).suffix(15)), name)
+        }
+        guard let latest = stamped.map(\.0).max() else { return [] }
+        return stamped.filter { $0.0 == latest }.map { dir.appendingPathComponent($0.1) }
+    }
+    var pending = false
+    func check() {
+        guard !pending else { return }
+        pending = true
+        // Let the switch settle first, then read what that Space shows.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            pending = false
+            do { try setWallpapers(newest(), onlyChanges: true).forEach { say("set \($0)") } }
+            catch { say("cannot set: \(error.localizedDescription)") }
+        }
+    }
+
+    // An app object, never shown, so screen changes reach this process.
+    let app = NSApplication.shared
+    app.setActivationPolicy(.prohibited)
+    let workspace = NSWorkspace.shared.notificationCenter
+    for name in [NSWorkspace.activeSpaceDidChangeNotification, NSWorkspace.didWakeNotification,
+                 NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+        workspace.addObserver(forName: name, object: nil, queue: .main) { _ in check() }
+    }
+    NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
+                                           object: nil, queue: .main) { _ in check() }
+    say("following \(dir.path)")
+    check()
+    app.run()
+    exit(0)
 }
 
 /// Wallpaper files the system still points at, on any Space or display.

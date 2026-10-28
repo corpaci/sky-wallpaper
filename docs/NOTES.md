@@ -133,10 +133,20 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
     `{type: imageFile, url}` entry that System Settings wrote, with no separate
     "dynamic" flag, so the behavior comes from the file either way.
   - **Spaces.** `NSWorkspace` sets only the Space currently showing on each
-    display. This Mac has five Spaces, so the others kept older files. Hence
-    `heicpack --in-use`, which reads the wallpaper store (fail-safe): daily.sh
-    deletes only files that no Space or display points at. A run that finds
-    today's sky already made still sets it on the desktops showing.
+    display, and full-screen apps are Spaces too. This Mac has one real
+    desktop per screen plus ten full-screen app Spaces. All three sets that
+    day landed on full-screen Spaces, so both real desktops kept the old
+    file: the owner saw it on one screen.
+    - Overwriting the wallpaper file in place doesn't help. Thirty seconds
+      later, macOS's cached copy still held the old bytes.
+    - `heicpack --in-use` reads the wallpaper store (fail-safe), so daily.sh
+      deletes only files that no Space or display points at.
+  - **The desktop follower.** `heicpack --follow`, a second LaunchAgent with
+    KeepAlive, wakes on Space switches, wake, session return and screen
+    changes. It sets the newest sky on the showing Space if that Space has an
+    older one. When the owner switched Spaces, the real desktop was set
+    within a second. Idle cost: about 30 MB resident and no CPU time growth
+    across 48 s of samples.
   - **macOS keeps its own byte-identical copy** of each wallpaper in
     `~/Library/Containers/com.apple.wallpaper.extension.image/Data/Library/Caches`.
     Re-setting the same file adds no copy.

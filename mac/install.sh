@@ -41,16 +41,24 @@ fi
 
 app="$HOME/Library/Application Support/SkyWallpaper"
 agent="$HOME/Library/LaunchAgents/local.sky-wallpaper.plist"
+follower="$HOME/Library/LaunchAgents/local.sky-wallpaper.follow.plist"
 
 swift build -c release --quiet
+# Stop both jobs before their files are replaced.
+for label in local.sky-wallpaper local.sky-wallpaper.follow; do
+    launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+done
 mkdir -p "$app/bin"
-# Copies, so rebuilding the repo never changes what the job runs.
+# Copies, so rebuilding the repo never changes what the jobs run.
 cp .build/release/wallframes .build/release/heicpack "$app/bin/"
 cp mac/daily.sh "$app/daily.sh"
-printf 'LAT=%s\nLON=%s\nWEATHER=%s\nSEED=%s\n' "$lat" "$lon" "$weather" "$seed" > "$app/config"
+config=$(printf 'LAT=%s\nLON=%s\nWEATHER=%s\nSEED=%s' "$lat" "$lon" "$weather" "$seed")
+changed=yes
+[ -f "$app/config" ] && [ "$(cat "$app/config")" = "$config" ] && changed=no
+printf '%s\n' "$config" > "$app/config"
 [ -f "$app/previous.txt" ] || "$app/bin/heicpack" --save "$app/previous.txt"
 
-# Background process type: low priority, efficiency cores.
+# The daily render. Background process type: low priority, efficiency cores.
 mkdir -p "$(dirname "$agent")"
 cat > "$agent" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -68,7 +76,27 @@ cat > "$agent" <<EOF
 </plist>
 EOF
 
-launchctl bootout "gui/$(id -u)/local.sky-wallpaper" 2>/dev/null || true
-/bin/bash "$app/daily.sh" --force   # now, in the foreground, so errors show here
+# The follower: macOS only lets the showing Space be set, so this idle
+# helper puts today's sky on each desktop as it comes into view. No timers;
+# it sleeps until you switch Spaces, wake the Mac or change screens.
+cat > "$follower" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>local.sky-wallpaper.follow</string>
+    <key>ProgramArguments</key><array><string>$app/bin/heicpack</string><string>--follow</string><string>$app/out</string></array>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>StandardOutPath</key><string>$app/follow.log</string>
+    <key>StandardErrorPath</key><string>$app/follow.log</string>
+</dict>
+</plist>
+EOF
+
+# Now, in the foreground, so errors show here. Re-render only if the settings changed.
+if [ "$changed" = yes ]; then /bin/bash "$app/daily.sh" --force; else /bin/bash "$app/daily.sh"; fi
 launchctl bootstrap "gui/$(id -u)" "$agent"
-echo "installed: daily at 00:05 (and at login, and on wake if missed); log: $app/daily.log"
+launchctl bootstrap "gui/$(id -u)" "$follower"
+echo "installed: daily render at 00:05 (and at login, and on wake if missed), plus the desktop follower"
+echo "logs: $app/daily.log, $app/follow.log"

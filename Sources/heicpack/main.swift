@@ -2,7 +2,8 @@
 //
 //   heicpack MANIFEST -o OUT.heic [--quality 0.95]
 //   heicpack --inspect FILE.heic...
-//   heicpack --screens | --set FILE.heic... | --in-use | --save FILE | --restore FILE
+//   heicpack --screens | --set FILE.heic... | --in-use | --follow DIR
+//   heicpack --save FILE | --restore FILE
 //
 // The manifest has one line per switch time, `HH:MM  path  [flags]`, in local
 // wall-clock time; each image shows from its time until the next one. Flags:
@@ -27,6 +28,7 @@ let usage = """
            heicpack --screens                each screen's size in pixels
            heicpack --set FILE.heic...       each screen gets the file for its size
            heicpack --in-use                 wallpaper files any Space still points at
+           heicpack --follow DIR             keep each desktop on DIR's newest sky
            heicpack --save FILE | --restore FILE   remember / put back the wallpapers
     """
 
@@ -219,8 +221,13 @@ case "--screens":
     screens().forEach { print("\($0.width)x\($0.height)") }
     exit(0)
 case "--set":
-    setWallpapers(args.dropFirst().map { URL(fileURLWithPath: $0) })
+    guard args.count > 1 else { fail("--set needs at least one file") }
+    do { try setWallpapers(args.dropFirst().map { URL(fileURLWithPath: $0) }).forEach { print($0) } }
+    catch { fail("cannot set the wallpaper: \(error.localizedDescription)") }
     exit(0)
+case "--follow":
+    guard args.count == 2, let dir = args.last else { fail(usage) }
+    follow(URL(fileURLWithPath: dir))
 case "--in-use":
     guard let paths = wallpapersInUse() else { fail("cannot read the wallpaper store") }
     paths.sorted().forEach { print($0) }
