@@ -7,29 +7,67 @@ not.
 
 **Frames.** 14 frames at fixed sun altitudes (−14°, −7°, −3°, 0.5°, 5°, 14° on
 each side of noon, plus noon and midnight), so they bunch around sunrise and
-sunset, where the sky changes fastest. The sun follows a sine arc between the
-given sunrise and sunset. Colors are blended in OKLab and dithered to 8 bits
-so slow gradients don't band. Rendering is deterministic: two runs with the
-same size, times and seed produce byte-identical PNGs (checked for both
-renderers, and from a fresh clone). The HEIC is not byte-identical between
-packs of the same frames: about 0.5 KB near the start of the file differs.
+sunset, where the sky changes fastest. The sun follows a sine arc between
+sunrise and sunset. Colors are blended in OKLab and dithered to 8 bits so slow
+gradients don't band. Rendering is deterministic: two runs with the same
+inputs produce byte-identical PNGs (checked for both renderers, and from a
+fresh clone). The HEIC is not byte-identical between packs of the same
+frames: about 0.5 KB near the start of the file differs.
+
+**Landscape.** Far to near:
+- a summit of domain-warped ridged multifractal noise, with a ragged snowcap
+  that takes the sky's color and is brighter on the face toward the sun;
+- a rocky middle range;
+- rounded hills with tiered pines in woods and clearings;
+- a cabin whose window lights up from dusk to dawn.
+
+Silhouettes are sampled four times per pixel column, so tree edges stay clean.
+
+**Sunrise and sunset** come from NOAA's general solar position equations, for
+`--lat/--lon` and the date in the machine's time zone. The day is held
+between 3 and 21 hours, centered on solar noon, so every frame keeps its own
+minute. The manifest header says when that happens (polar night or day).
+
+**Weather.** Each sky (clear, cloudy, overcast, rain, snow, fog) maps to five
+knobs in `Weather`: clouds, overcast, rain, snow and fog. The forecast is
+Open-Meteo's hourly `weather_code` and `cloud_cover`. WMO codes decide fog,
+snow and rain; cloud cover decides the rest (under 30% clear, under 75%
+cloudy, otherwise overcast). Each frame takes its hour's sky. Extra frames go
+on every hour where the sky changes, and at 00:00 if the frame that wraps past
+midnight would show the wrong sky.
 
 **macOS format.** A multi-image HEIC. The first image carries XMP
 `apple_desktop:h24` (namespace `http://ns.apple.com/namespace/1.0/`): a base64
 binary plist `{ti: [{t: fraction of day, i: image index}], ap: {l, d}}`.
 
+**macOS daily job.** A LaunchAgent (`local.sky-wallpaper`, process type
+Background) runs `daily.sh` at 00:05, at login, and on wake after a missed run:
+1. Render each screen's size, which `heicpack --screens` reports in backing
+   pixels.
+2. Pack the frames into a new file name, because macOS caches wallpapers by
+   path.
+3. `heicpack --set` gives each screen the file for its size.
+4. Keep only what is on screen.
+
+A run is skipped if today's sky already exists.
+
 **Windows.** `install.ps1` compiles `windows/src/*.cs` twice with
 `%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe`: once as `sky.exe`
-(console) and once as `sky-apply.exe` (windowless, so nothing flashes). It
-renders into a fresh `frames-<timestamp>` folder each time, because Windows
-caches wallpapers by path. The task has one daily trigger per switch time and
-one at logon, with "run as soon as possible after a missed start" on, which
-covers sleep. `sky-apply.exe apply` sets each monitor's frame through
-`IDesktopWallpaper`, and skips monitors that already show the right frame.
+(console), and once as `sky-apply.exe` (windowless, so nothing flashes). The
+scheduled task runs `sky-apply.exe tick`:
+1. Render today if it's missing, into a new folder, because Windows caches
+   wallpapers by path.
+2. When the frames changed, re-register the task from Task Scheduler XML via
+   `schtasks /XML`:
+   - one daily trigger per switch time, plus 00:05;
+   - catch-up triggers 30 s after logon, on unlock, and on wake (Kernel-Power
+     507 or Power-Troubleshooter event 1);
+   - priority 7, never wakes the PC.
+3. Set each monitor's frame through `IDesktopWallpaper`.
 
 ## Verified
 
-On macOS 26.6.2, M3, Swift 6.3.3, Mono 6 (Roslyn csc 3.9):
+On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
 
 - **HEIC metadata.** The namespace and the `l`/`d` keys match Apple's own
   `/System/Library/Desktop Pictures/Sonoma.heic`. Apple's time-based wallpapers
@@ -52,34 +90,53 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6 (Roslyn csc 3.9):
 
   Apple ships its own wallpapers as 8-bit HEIC too. Windows uses PNG, which
   keeps the dither exactly.
-- **C# port.** Compiles with `-langversion:5` (the level of Windows' built-in
-  compiler) in console and windowless builds, with no warnings. Against the
-  Swift renderer, at most 0.012% of color values differ, each by one step out
-  of 255, on an October day (07:20–17:55) and a summer day (05:05–20:55).
-  Schedules are identical.
-- **Frame choice.** Tested with `sky frame` on two rendered sizes: it wraps
-  past midnight, switches exactly on the minute, and uses the closest aspect
-  ratio for other monitor sizes.
-- **Windows PC (owner, 2026-10-22).** `install.ps1` runs on a real PC: the
-  built-in compiler accepts the code, the task registers, and the wallpaper
-  gets set.
+- **C# port.** It compiles with `-langversion:5`, the level of Windows'
+  built-in compiler, in console and windowless builds, with no warnings.
+  `windows/parity.sh` compares it with the Swift renderer for every sky and for
+  a real forecast day (`tests/forecast-berlin-2026-10-28.json`). At worst,
+  0.015% of color values differ, each by one step out of 255. Schedules are
+  identical.
+- **Sunrise and sunset.** `tests/daylight.sh` compares both renderers with
+  published times from Open-Meteo's archive:
+  - Berlin winter and summer, Madrid, Sydney and Quito: all within 1 minute;
+  - Tromsø: polar night and polar day are handled.
+- **Forecast.** A live fetch for Berlin works in both renderers (Swift
+  URLSession, and C# WebClient with TLS 1.2 under Mono), and gives identical
+  schedules.
+- **macOS daily job, without installing.** I ran `daily.sh --no-set` in a
+  scratch folder:
+  - two screens (3420×2224 and 1920×1080), 26 frames each with weather, in
+    22 s wall clock and 54 s of CPU;
+  - a second run is skipped;
+  - zone.tab parsing gives the right coordinates for six time zones.
+  - `heicpack --screens` and `--save` read this Mac correctly.
+- **Windows task XML.** It is well-formed as UTF-16, the encoding schtasks
+  reads: 27 daily triggers, plus logon, unlock and wake.
+- **Frame choice.** I tested `sky frame` on two rendered sizes. It wraps past
+  midnight, switches exactly on the minute, and uses the closest aspect ratio
+  for other monitor sizes.
+- **Windows PC (owner, 2026-10-22).** The earlier `install.ps1` runs on a real
+  PC: the built-in compiler accepts the code, the task registers, and the
+  wallpaper gets set.
 - **macOS screen saver.** The screen saver is its own setting, separate from
   the wallpaper. On this Mac it was an Aerial video while the desktop showed
   the sky HEIC.
 
 ## Not verified
 
+- **macOS daily job as a LaunchAgent.** It hasn't run under launchd yet. Also
+  unconfirmed: that a HEIC set with `NSWorkspace.setDesktopImageURL` stays
+  dynamic.
 - **macOS local time.** It is unconfirmed that macOS reads `t` as local time,
-  not UTC. To check, install it and compare the frame on screen with
-  `heicpack --inspect` for the current time.
-- **macOS cache.** Replacing a file at the same path may not refresh the
-  wallpaper. That is why output names carry the date.
-- **Windows after sleep.** The first PC run (owner, 2026-10-22) did not
-  update the frame overnight. The likely cause is switch times missed during
-  sleep: "run as soon as possible after a missed start" is not reliable after
-  sleep. The task now also fires on wake (Power-Troubleshooter event 1,
-  Kernel-Power 507 for Modern Standby), on unlock, and 30 s after logon.
-  Unconfirmed: that the fix works, and that a standard user may register the
-  wake trigger (if not, the installer warns and keeps unlock and logon).
+  not UTC. To check, compare the frame on screen with `heicpack --inspect` for
+  the current time.
+- **Windows `tick`.** It has never run on Windows:
+  - `schtasks /XML` accepting this XML;
+  - re-registering the task from inside its own run;
+  - rendering through the windowless build;
+  - a standard user registering the wake trigger (if refused, `tick` logs it
+    and registers without it).
+- **Windows after sleep.** The first PC run did not update overnight. The
+  catch-up triggers are meant to fix that, but haven't been confirmed.
 - **Windows scaled displays.** Whether monitor sizes come back in physical
-  pixels on scaled displays is untested (`sky monitors` prints what it sees).
+  pixels is untested (`sky monitors` prints what it sees).

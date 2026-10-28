@@ -4,6 +4,8 @@
 //
 //   sky render [--size WxH]... [--seed N] [--dry-run] --out DIR
 //              [--sunrise HH:MM --sunset HH:MM | --lat DEG --lon DEG [--date yyyy-MM-dd] [--utc-offset MIN]]
+//   sky tick [--force]   what the scheduled task runs: render today if needed,
+//                        keep the task's switch times current, set the frame
 //   sky apply DIR        set each monitor to the frame for the current local time
 //   sky frame DIR HH:MM [WxH]   print the frame a monitor that size shows then
 //   sky schedule DIR     print the switch times, one HH:MM per line
@@ -101,8 +103,8 @@ static class Program
 {
     const string Usage = @"usage: sky render [--size WxH]... [--seed N] [--dry-run] --out DIR
            [--sunrise HH:MM --sunset HH:MM | --lat DEG --lon DEG [--date yyyy-MM-dd] [--utc-offset MIN]]
-       sky apply DIR | sky frame DIR HH:MM [WxH] | sky schedule DIR
-       sky monitors | sky save FILE | sky restore FILE";
+       sky apply DIR | sky frame DIR HH:MM [WxH] | sky schedule DIR | sky task-xml DIR
+       sky tick [--force] | sky monitors | sky save FILE | sky restore FILE";
 
     [STAThread]
     static int Main(string[] args)
@@ -165,6 +167,13 @@ static class Program
             case "schedule":
                 foreach (var e in FrameSet.LoadAll(One(rest, "schedule DIR"))[0].Entries) Console.WriteLine(Clock(e.Key));
                 return 0;
+            case "tick":
+                if (rest.Count > 1 || (rest.Count == 1 && rest[0] != "--force")) throw new UsageException("usage: sky tick [--force]");
+                return Tick(rest.Count == 1);
+            case "task-xml":
+                Console.Write(SkyTask.Xml(Today(), FrameSet.LoadAll(One(rest, "task-xml DIR"))[0].Entries.Select(e => e.Key),
+                    Environment.UserDomainName + "\\" + Environment.UserName, Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "sky-apply.exe"), true));
+                return 0;
             case "monitors":
                 Desktop.BeDpiAware();
                 foreach (Monitor m in Desktop.Monitors()) Console.WriteLine("{0}x{1}  {2}", m.Width, m.Height, m.Id);
@@ -180,6 +189,79 @@ static class Program
             default:
                 throw new UsageException("unknown command " + args[0] + Environment.NewLine + Usage);
         }
+    }
+
+    static string Today() { return DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture); }
+
+    /// What the scheduled task runs. Renders today's frames if they are
+    /// missing (or --force), into a new folder (Windows caches wallpapers by
+    /// path); re-registers the task when the frames changed, so tomorrow's
+    /// triggers match today's sky; then sets the current frame and drops
+    /// older frames. Reads config.txt beside the exe: lat, lon, weather
+    /// (yes|no), seed, or sunrise and sunset when there is no location.
+    static int Tick(bool force)
+    {
+        string app = AppDomain.CurrentDomain.BaseDirectory;
+        var config = new Dictionary<string, string>();
+        foreach (string line in File.ReadAllLines(Path.Combine(app, "config.txt")))
+        {
+            int eq = line.IndexOf('=');
+            if (eq > 0) config[line.Substring(0, eq).Trim()] = line.Substring(eq + 1).Trim();
+        }
+        Func<string, string, string> get = (name, fallback) => config.ContainsKey(name) ? config[name] : fallback;
+        bool located = config.ContainsKey("lat") && config.ContainsKey("lon");
+
+        // Located skies change daily; fixed times render once.
+        string key = located ? Today() : "fixed";
+        string dir = Directory.GetDirectories(app, "frames-" + key + "-*")
+            .Where(d => Directory.GetFiles(d, "manifest.txt", SearchOption.AllDirectories).Length > 0)
+            .OrderByDescending(d => d, StringComparer.Ordinal).FirstOrDefault();
+        if (dir == null || force)
+        {
+            dir = Path.Combine(app, "frames-" + key + "-" + DateTime.Now.ToString("HHmmss", CultureInfo.InvariantCulture));
+            var args = new List<string> { "--seed", get("seed", "7"), "--out", dir };
+            args.AddRange(located
+                ? new[] { "--lat", config["lat"], "--lon", config["lon"] }
+                : new[] { "--sunrise", get("sunrise", "07:20"), "--sunset", get("sunset", "17:55") });
+            bool weather = located && get("weather", "yes") == "yes";
+            if (!weather) Render(args);
+            else
+            {
+                try { Render(args.Concat(new[] { "--weather" }).ToList()); }
+                catch (UsageException e)
+                {
+                    Fail(e.Message + "; rendering without weather");
+                    if (Directory.Exists(dir)) Directory.Delete(dir, true);
+                    Render(args);
+                }
+            }
+        }
+        List<FrameSet> sets = FrameSet.LoadAll(dir);
+
+        string registered = Path.Combine(app, "task.txt");
+        if (!File.Exists(registered) || File.ReadAllText(registered) != dir)
+        {
+            var minutes = sets[0].Entries.Select(e => e.Key).ToList();
+            string user = System.Security.Principal.WindowsIdentity.GetCurrent().Name, exe = Path.Combine(app, "sky-apply.exe"), error;
+            if (!SkyTask.Register(SkyTask.Xml(Today(), minutes, user, exe, true), out error))
+            {
+                // Event triggers can be refused on locked-down machines; unlock and logon still catch up.
+                Fail("no wake trigger (" + error + "); the frame catches up at unlock instead");
+                if (!SkyTask.Register(SkyTask.Xml(Today(), minutes, user, exe, false), out error))
+                    throw new InvalidOperationException("cannot register the scheduled task: " + error);
+            }
+            File.WriteAllText(registered, dir);
+        }
+
+        Desktop.BeDpiAware();
+        foreach (string line in Desktop.Apply(sets, Now())) Console.WriteLine(line);
+        foreach (string old in Directory.GetDirectories(app, "frames-*"))
+        {
+            if (string.Equals(old, dir, StringComparison.OrdinalIgnoreCase)) continue;
+            try { Directory.Delete(old, true); }
+            catch (IOException) { }  // still on screen somewhere; next tick
+        }
+        return 0;
     }
 
     static string One(List<string> rest, string form)
