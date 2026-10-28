@@ -2,7 +2,8 @@
 // sky.exe (console, for people and the installer) and sky-apply.exe
 // (windowless, for Task Scheduler, so nothing flashes at switch time).
 //
-//   sky render [--size WxH]... [--sunrise HH:MM] [--sunset HH:MM] [--seed N] --out DIR
+//   sky render [--size WxH]... [--seed N] [--dry-run] --out DIR
+//              [--sunrise HH:MM --sunset HH:MM | --lat DEG --lon DEG [--date yyyy-MM-dd] [--utc-offset MIN]]
 //   sky apply DIR        set each monitor to the frame for the current local time
 //   sky frame DIR HH:MM [WxH]   print the frame a monitor that size shows then
 //   sky schedule DIR     print the switch times, one HH:MM per line
@@ -16,6 +17,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 
@@ -97,7 +99,8 @@ sealed class FrameSet
 
 static class Program
 {
-    const string Usage = @"usage: sky render [--size WxH]... [--sunrise HH:MM] [--sunset HH:MM] [--seed N] --out DIR
+    const string Usage = @"usage: sky render [--size WxH]... [--seed N] [--dry-run] --out DIR
+           [--sunrise HH:MM --sunset HH:MM | --lat DEG --lon DEG [--date yyyy-MM-dd] [--utc-offset MIN]]
        sky apply DIR | sky frame DIR HH:MM [WxH] | sky schedule DIR
        sky monitors | sky save FILE | sky restore FILE";
 
@@ -212,6 +215,21 @@ static class Program
 
     static string Clock(int minute) { return string.Format("{0:D2}:{1:D2}", minute / 60, minute % 60); }
 
+    static string Num(double v) { return v.ToString("R", CultureInfo.InvariantCulture); }
+
+    static double Degrees(string s, double limit, string error)
+    {
+        double v;
+        if (!double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out v) || Math.Abs(v) > limit)
+            throw new UsageException(error);
+        return v;
+    }
+
+    static string Header(int width, int height, int sunrise, int sunset, string dayNote, uint seed)
+    {
+        return string.Format("# sky {0}x{1}, sunrise {2}, sunset {3}{4}, seed {5}", width, height, Clock(sunrise), Clock(sunset), dayNote, seed);
+    }
+
     sealed class Frame
     {
         public string Label;
@@ -224,10 +242,14 @@ static class Program
         var sizes = new List<int[]>();
         int sunrise = 7 * 60 + 20, sunset = 17 * 60 + 55;
         uint seed = 7;
-        string outDir = null;
+        string outDir = null, date = null;
+        bool dryRun = false;
+        double? latitude = null, longitude = null;
+        int? utcOffset = null;
         for (int i = 0; i < args.Count; i++)
         {
             string flag = args[i];
+            if (flag == "--dry-run") { dryRun = true; continue; }
             if (i + 1 >= args.Count) throw new UsageException(flag + " needs a value");
             string value = args[++i];
             int w, h;
@@ -249,12 +271,39 @@ static class Program
                 case "--out":
                     outDir = value;
                     break;
+                case "--lat":
+                    latitude = Degrees(value, 90, "--lat wants degrees north, -90 to 90");
+                    break;
+                case "--lon":
+                    longitude = Degrees(value, 180, "--lon wants degrees east, -180 to 180");
+                    break;
+                case "--date":
+                    date = value;
+                    break;
+                case "--utc-offset":
+                    int offset;
+                    if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out offset) || Math.Abs(offset) > 14 * 60)
+                        throw new UsageException("--utc-offset wants minutes, e.g. 60");
+                    utcOffset = offset;
+                    break;
                 default:
                     throw new UsageException("unknown flag " + flag + Environment.NewLine + Usage);
             }
         }
-        if (outDir == null) throw new UsageException("render needs --out DIR");
+        string dayNote = "";
+        if (latitude.HasValue || longitude.HasValue)
+        {
+            if (!latitude.HasValue || !longitude.HasValue) throw new UsageException("--lat and --lon go together");
+            string day = date ?? DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            Daylight d = Daylight.For(latitude.Value, longitude.Value, day, utcOffset);
+            if (d == null) throw new UsageException("--date wants yyyy-MM-dd");
+            sunrise = d.Sunrise;
+            sunset = d.Sunset;
+            dayNote = " on " + day + " at " + Num(latitude.Value) + ", " + Num(longitude.Value) + (d.Note == null ? "" : " (" + d.Note + ")");
+        }
+        if (outDir == null && !dryRun) throw new UsageException("render needs --out DIR");
         if (sunset - sunrise < 120) throw new UsageException("sunset must be at least two hours after sunrise");
+        if (sizes.Count == 0 && dryRun) sizes.Add(new[] { 2560, 1664 });
         if (sizes.Count == 0)
         {
             Desktop.BeDpiAware();
@@ -283,6 +332,13 @@ static class Program
             if (frames[i].Minute == frames[i - 1].Minute)
                 throw new UsageException(frames[i - 1].Label + " and " + frames[i].Label + " both land on " + Clock(frames[i].Minute) + "; day or night too short for this schedule");
 
+        if (dryRun)
+        {
+            Console.WriteLine(Header(sizes[0][0], sizes[0][1], sunrise, sunset, dayNote, seed));
+            foreach (Frame f in frames) Console.WriteLine(Clock(f.Minute) + "  " + f.Label);
+            return 0;
+        }
+
         foreach (int[] size in sizes)
         {
             int width = size[0], height = size[1];
@@ -292,7 +348,7 @@ static class Program
             var scene = new Scene(width, height, seed);
             Console.WriteLine("scene {0}x{1}, seed {2}: {3:F2}s", width, height, seed, clock.Elapsed.TotalSeconds);
             var manifest = new List<string> {
-                string.Format("# sky {0}x{1}, sunrise {2}, sunset {3}, seed {4}", width, height, Clock(sunrise), Clock(sunset), seed),
+                Header(width, height, sunrise, sunset, dayNote, seed),
                 "# HH:MM  file  [primary] [light] [dark]",
             };
             for (int i = 0; i < frames.Count; i++)

@@ -1,20 +1,23 @@
 // wallframes — render one day of landscape frames for a dynamic wallpaper.
 //
-//   wallframes [--size 2560x1664] [--sunrise 07:20] [--sunset 17:55]
-//              [--seed 7] [--out frames]
+//   wallframes [--size 2560x1664] [--seed 7] [--out frames] [--dry-run]
+//              [--sunrise 07:20 --sunset 17:55 | --lat 48.2 --lon 16.4
+//               [--date yyyy-MM-dd] [--utc-offset MINUTES]]
 //
 // Writes one PNG per frame plus manifest.txt, the input heicpack expects.
 // Frames sit at fixed sun altitudes, so they bunch up around sunrise and
-// sunset, where the sky changes fastest. An h24 wallpaper follows the clock,
-// not the sun: regenerate with new --sunrise/--sunset as the seasons move.
+// sunset, where the sky changes fastest. With --lat/--lon the day's real
+// sunrise and sunset are computed (for today unless --date says otherwise);
+// otherwise the fixed times apply. --dry-run prints the schedule only.
 
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
 let usage = """
-    usage: wallframes [--size WIDTHxHEIGHT] [--sunrise HH:MM] [--sunset HH:MM]
-                      [--seed N] [--out DIR]
+    usage: wallframes [--size WIDTHxHEIGHT] [--seed N] [--out DIR] [--dry-run]
+                      [--sunrise HH:MM --sunset HH:MM | --lat DEG --lon DEG
+                       [--date yyyy-MM-dd] [--utc-offset MINUTES]]
     """
 
 func fail(_ msg: String) -> Never {
@@ -44,10 +47,12 @@ func writePNG(_ rgbx: [UInt8], width: Int, height: Int, to url: URL) {
 }
 
 var width = 2560, height = 1664, sunrise = 7 * 60 + 20, sunset = 17 * 60 + 55
-var seed: UInt32 = 7, outDir = "frames"
+var seed: UInt32 = 7, outDir = "frames", dryRun = false
+var latitude: Double?, longitude: Double?, date: String?, utcOffset: Int?
 var args = CommandLine.arguments.dropFirst()
 while let flag = args.popFirst() {
     if flag == "-h" || flag == "--help" { print(usage); exit(0) }
+    if flag == "--dry-run" { dryRun = true; continue }
     guard let value = args.popFirst() else { fail("\(flag) needs a value\n\(usage)") }
     switch flag {
     case "--size":
@@ -64,8 +69,28 @@ while let flag = args.popFirst() {
         guard let s = UInt32(value) else { fail("--seed wants a whole number") }
         seed = s
     case "--out": outDir = value
+    case "--lat":
+        guard let v = Double(value), (-90...90).contains(v) else { fail("--lat wants degrees north, -90 to 90") }
+        latitude = v
+    case "--lon":
+        guard let v = Double(value), (-180...180).contains(v) else { fail("--lon wants degrees east, -180 to 180") }
+        longitude = v
+    case "--date": date = value
+    case "--utc-offset":
+        guard let v = Int(value), (-14 * 60...14 * 60).contains(v) else { fail("--utc-offset wants minutes, e.g. 60") }
+        utcOffset = v
     default: fail("unknown flag \(flag)\n\(usage)")
     }
+}
+var dayNote = ""
+if latitude != nil || longitude != nil {
+    guard let latitude, let longitude else { fail("--lat and --lon go together") }
+    let today = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+    let day = date ?? String(format: "%04d-%02d-%02d", today.year!, today.month!, today.day!)
+    guard let d = Daylight(latitude: latitude, longitude: longitude, date: day, utcOffset: utcOffset)
+    else { fail("--date wants yyyy-MM-dd") }
+    (sunrise, sunset) = (d.sunrise, d.sunset)
+    dayNote = " on \(day) at \(latitude), \(longitude)" + (d.note.map { " (\($0))" } ?? "")
 }
 guard sunset - sunrise >= 120 else { fail("sunset must be at least two hours after sunrise") }
 
@@ -89,6 +114,13 @@ for (a, b) in zip(frames, frames.dropFirst()) where a.minute == b.minute {
     fail("\(a.label) and \(b.label) both land on \(clock(a.minute)); day or night too short for this schedule")
 }
 
+let header = "# wallframes \(width)x\(height), sunrise \(clock(sunrise)), sunset \(clock(sunset))\(dayNote), seed \(seed)"
+if dryRun {
+    print(header)
+    for frame in frames { print("\(clock(frame.minute))  \(frame.label)") }
+    exit(0)
+}
+
 let dir = URL(fileURLWithPath: outDir)
 do { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }
 catch { fail("cannot create \(dir.path): \(error.localizedDescription)") }
@@ -98,7 +130,7 @@ let scene = Scene(width: width, height: height, seed: seed)
 print(String(format: "scene %dx%d, seed %u: %.2fs", width, height, seed, Date().timeIntervalSince(start)))
 
 var manifest = """
-    # wallframes \(width)x\(height), sunrise \(clock(sunrise)), sunset \(clock(sunset)), seed \(seed)
+    \(header)
     # HH:MM  file  [primary] [light] [dark]
 
     """
