@@ -37,6 +37,8 @@ mac/install.sh --lat 48.2 --lon 16.4
 - A background job (launchd) runs at 00:05, at login, and on wake if it
   missed 00:05. It renders the day for each screen, packs it and sets it.
   The log is at `~/Library/Application Support/SkyWallpaper/daily.log`.
+- With several desktops (Spaces), macOS only lets it set the ones showing.
+  The others catch up when they're showing during a run.
 - `mac/uninstall.sh` removes it all and puts your previous wallpaper back.
 
 **Static (fixed times, nothing installed):**
@@ -140,10 +142,9 @@ tests/daylight.sh     # sunrise and sunset against published times
 
 ## Status
 
-- **macOS:** the renderer, packer and daily job are built and tested here.
-  The background job hasn't run as a real LaunchAgent yet. Also unconfirmed:
-  whether a HEIC set from code stays dynamic, and whether macOS switches on
-  local time.
+- **macOS:** the daily job is installed and works on the author's Mac, and
+  the wallpaper stays dynamic. Still open: whether macOS ever trims its own
+  copies of past days' wallpapers, and the first 00:05 run.
 - **Windows:** the earlier version runs on a real PC. The daily `tick`
   (rendering, re-registering the task, weather) compiles and its task XML
   validates, but it hasn't run on Windows yet.

@@ -42,6 +42,33 @@ func setWallpapers(_ files: [URL]) {
     }
 }
 
+/// Wallpaper files the system still points at, on any Space or display.
+/// NSWorkspace only sets the current Space, so others keep older files;
+/// this says which are safe to delete. It reads the wallpaper store, a
+/// private format: nil when that fails, and then nothing should be deleted.
+func wallpapersInUse() -> Set<String>? {
+    let store = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/com.apple.wallpaper/Store/Index.plist")
+    guard let data = try? Data(contentsOf: store),
+          let root = try? PropertyListSerialization.propertyList(from: data, format: nil) else { return nil }
+    var paths = Set<String>()
+    func walk(_ node: Any) {
+        if let dict = node as? [String: Any] {
+            if let blob = dict["Configuration"] as? Data,
+               let config = try? PropertyListSerialization.propertyList(from: blob, format: nil) as? [String: Any],
+               let url = (config["url"] as? [String: Any])?["relative"] as? String,
+               let path = URL(string: url)?.path {
+                paths.insert(path)
+            }
+            dict.values.forEach(walk)
+        } else if let array = node as? [Any] {
+            array.forEach(walk)
+        }
+    }
+    walk(root)
+    return paths
+}
+
 /// Current wallpapers, one `display-id<TAB>path` line per screen.
 func saveWallpapers(to file: URL) {
     let lines = screens().compactMap { s in

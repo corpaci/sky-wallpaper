@@ -2,7 +2,7 @@
 //
 //   heicpack MANIFEST -o OUT.heic [--quality 0.95]
 //   heicpack --inspect FILE.heic...
-//   heicpack --screens | --set FILE.heic... | --save FILE | --restore FILE
+//   heicpack --screens | --set FILE.heic... | --in-use | --save FILE | --restore FILE
 //
 // The manifest has one line per switch time, `HH:MM  path  [flags]`, in local
 // wall-clock time; each image shows from its time until the next one. Flags:
@@ -26,6 +26,7 @@ let usage = """
            heicpack --inspect FILE.heic...
            heicpack --screens                each screen's size in pixels
            heicpack --set FILE.heic...       each screen gets the file for its size
+           heicpack --in-use                 wallpaper files any Space still points at
            heicpack --save FILE | --restore FILE   remember / put back the wallpapers
     """
 
@@ -219,6 +220,10 @@ case "--screens":
     exit(0)
 case "--set":
     setWallpapers(args.dropFirst().map { URL(fileURLWithPath: $0) })
+    exit(0)
+case "--in-use":
+    guard let paths = wallpapersInUse() else { fail("cannot read the wallpaper store") }
+    paths.sorted().forEach { print($0) }
     exit(0)
 case "--save", "--restore":
     guard args.count == 2, let file = args.last.map({ URL(fileURLWithPath: $0) }) else { fail(usage) }

@@ -122,11 +122,30 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
   the wallpaper. On this Mac it was an Aerial video while the desktop showed
   the sky HEIC.
 
+- **macOS daily job, installed (2026-10-28).**
+  - The agent loads as a background-type job with the 00:05 calendar trigger.
+    The first run rendered and set both screens (19 frames each, from the
+    Vienna forecast). The run-at-load skipped correctly.
+  - **It stays dynamic.** `NSWorkspace.setDesktopImageURL` writes the same
+    `{type: imageFile, url}` entry that System Settings wrote, with no separate
+    "dynamic" flag, so the behavior comes from the file either way.
+  - **Spaces.** `NSWorkspace` sets only the Space currently showing on each
+    display. This Mac has five Spaces, so the others kept older files. Hence
+    `heicpack --in-use`, which reads the wallpaper store (fail-safe): daily.sh
+    deletes only files that no Space or display points at. A run that finds
+    today's sky already made still sets it on the desktops showing.
+  - **macOS keeps its own byte-identical copy** of each wallpaper in
+    `~/Library/Containers/com.apple.wallpaper.extension.image/Data/Library/Caches`.
+    Re-setting the same file adds no copy.
+
 ## Not verified
 
-- **macOS daily job as a LaunchAgent.** It hasn't run under launchd yet. Also
-  unconfirmed: that a HEIC set with `NSWorkspace.setDesktopImageURL` stays
-  dynamic.
+- **macOS cache trimming.** A copy whose file no Space uses any more was still
+  in that cache minutes later. If macOS never trims it, it grows by one
+  render's HEICs per day: about 27 MB on this Mac (3420×2224 plus 1920×1080).
+  To watch it:
+  `ls ~/Library/Containers/com.apple.wallpaper.extension.image/Data/Library/Caches/*.heic | wc -l`.
+- **macOS first 00:05 run.** The scheduled trigger hasn't fired yet.
 - **macOS local time.** It is unconfirmed that macOS reads `t` as local time,
   not UTC. To check, compare the frame on screen with `heicpack --inspect` for
   the current time.
