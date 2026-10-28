@@ -2,6 +2,7 @@
 //
 //   heicpack MANIFEST -o OUT.heic [--quality 0.95]
 //   heicpack --inspect FILE.heic...
+//   heicpack --screens | --set FILE.heic... | --save FILE | --restore FILE
 //
 // The manifest has one line per switch time, `HH:MM  path  [flags]`, in local
 // wall-clock time; each image shows from its time until the next one. Flags:
@@ -23,6 +24,9 @@ import UniformTypeIdentifiers
 let usage = """
     usage: heicpack MANIFEST -o OUT.heic [--quality 0.1–1.0, default 0.95]
            heicpack --inspect FILE.heic...
+           heicpack --screens                each screen's size in pixels
+           heicpack --set FILE.heic...       each screen gets the file for its size
+           heicpack --save FILE | --restore FILE   remember / put back the wallpapers
     """
 
 let desktopNS = "http://ns.apple.com/namespace/1.0/" as CFString
@@ -205,10 +209,23 @@ func pack(manifest: URL, output: URL, quality: Double) {
 // MARK: - Main
 
 var args = CommandLine.arguments.dropFirst()
-if args.first == "--inspect" {
+switch args.first {
+case "--inspect":
     guard args.count > 1 else { fail(usage) }
     args.dropFirst().forEach { describe(URL(fileURLWithPath: $0)) }
     exit(0)
+case "--screens":
+    screens().forEach { print("\($0.width)x\($0.height)") }
+    exit(0)
+case "--set":
+    setWallpapers(args.dropFirst().map { URL(fileURLWithPath: $0) })
+    exit(0)
+case "--save", "--restore":
+    guard args.count == 2, let file = args.last.map({ URL(fileURLWithPath: $0) }) else { fail(usage) }
+    if args.first == "--save" { saveWallpapers(to: file) } else { restoreWallpapers(from: file) }
+    exit(0)
+default:
+    break
 }
 var manifestPath: String?, outputPath: String?, quality = 0.95
 while let arg = args.popFirst() {
