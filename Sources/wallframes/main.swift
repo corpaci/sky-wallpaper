@@ -49,10 +49,12 @@ func writePNG(_ rgbx: [UInt8], width: Int, height: Int, to url: URL) {
 var width = 2560, height = 1664, sunrise = 7 * 60 + 20, sunset = 17 * 60 + 55
 var seed: UInt32 = 7, outDir = "frames", dryRun = false
 var latitude: Double?, longitude: Double?, date: String?, utcOffset: Int?, forcedSky: Sky?
+var fetchWeather = false, forecastFile: String?
 var args = CommandLine.arguments.dropFirst()
 while let flag = args.popFirst() {
     if flag == "-h" || flag == "--help" { print(usage); exit(0) }
     if flag == "--dry-run" { dryRun = true; continue }
+    if flag == "--weather" { fetchWeather = true; continue }
     guard let value = args.popFirst() else { fail("\(flag) needs a value\n\(usage)") }
     switch flag {
     case "--size":
@@ -79,6 +81,7 @@ while let flag = args.popFirst() {
     case "--sky":
         guard let s = Sky(rawValue: value) else { fail("--sky wants one of: \(Sky.allCases.map(\.rawValue).joined(separator: ", "))") }
         forcedSky = s
+    case "--forecast": forecastFile = value
     case "--utc-offset":
         guard let v = Int(value), (-14 * 60...14 * 60).contains(v) else { fail("--utc-offset wants minutes, e.g. 60") }
         utcOffset = v
@@ -86,10 +89,10 @@ while let flag = args.popFirst() {
     }
 }
 var dayNote = ""
+let today = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+let day = date ?? String(format: "%04d-%02d-%02d", today.year!, today.month!, today.day!)
 if latitude != nil || longitude != nil {
     guard let latitude, let longitude else { fail("--lat and --lon go together") }
-    let today = Calendar.current.dateComponents([.year, .month, .day], from: Date())
-    let day = date ?? String(format: "%04d-%02d-%02d", today.year!, today.month!, today.day!)
     guard let d = Daylight(latitude: latitude, longitude: longitude, date: day, utcOffset: utcOffset)
     else { fail("--date wants yyyy-MM-dd") }
     (sunrise, sunset) = (d.sunrise, d.sunset)
@@ -121,7 +124,37 @@ for (a, b) in zip(frames, frames.dropFirst()) where a.minute == b.minute {
 }
 if let forcedSky { for i in frames.indices { frames[i].sky = forcedSky } }
 
+// Weather: each frame takes its hour's sky, plus one more frame on every
+// hour the sky changes, so the change shows on time.
+var forecast: Forecast?, forecastBody: Data?
+if fetchWeather || forecastFile != nil {
+    guard forcedSky == nil else { fail("--sky and a forecast don't mix") }
+    if let forecastFile {
+        guard let data = FileManager.default.contents(atPath: forecastFile), let f = Forecast(json: data, date: day)
+        else { fail("\(forecastFile): no complete hourly forecast for \(day)") }
+        forecast = f
+    } else {
+        guard let latitude, let longitude else { fail("--weather needs --lat and --lon") }
+        guard let fetched = Forecast.fetch(latitude: latitude, longitude: longitude, date: day)
+        else { fail("no forecast for \(day) from api.open-meteo.com") }
+        (forecast, forecastBody) = fetched
+    }
+}
+if let forecast {
+    for i in frames.indices { frames[i].sky = forecast.hours[frames[i].minute / 60] }
+    for hour in 1..<24 where forecast.hours[hour] != forecast.hours[hour - 1]
+        && !frames.contains(where: { $0.minute == hour * 60 }) {
+        frames.append(Frame(label: String(format: "hour-%02d", hour), minute: hour * 60, sky: forecast.hours[hour]))
+    }
+    frames.sort { $0.minute < $1.minute }
+    // Before the day's first frame the last one shows (it wraps past midnight).
+    if frames[0].minute > 0 && frames[frames.count - 1].sky != forecast.hours[0] {
+        frames.insert(Frame(label: "hour-00", minute: 0, sky: forecast.hours[0]), at: 0)
+    }
+}
+
 let header = "# wallframes \(width)x\(height), sunrise \(clock(sunrise)), sunset \(clock(sunset))\(dayNote), seed \(seed)"
+    + (forecast != nil ? ", hourly weather" : forcedSky.map { ", sky \($0.rawValue)" } ?? "")
 if dryRun {
     print(header)
     for frame in frames { print("\(clock(frame.minute))  \(frame.name)") }
@@ -131,6 +164,7 @@ if dryRun {
 let dir = URL(fileURLWithPath: outDir)
 do { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }
 catch { fail("cannot create \(dir.path): \(error.localizedDescription)") }
+if let forecastBody { try? forecastBody.write(to: dir.appendingPathComponent("forecast.json")) }
 
 let start = Date()
 let scene = Scene(width: width, height: height, seed: seed)

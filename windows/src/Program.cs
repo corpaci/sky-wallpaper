@@ -245,8 +245,8 @@ static class Program
         var sizes = new List<int[]>();
         int sunrise = 7 * 60 + 20, sunset = 17 * 60 + 55;
         uint seed = 7;
-        string outDir = null, date = null;
-        bool dryRun = false;
+        string outDir = null, date = null, forecastFile = null;
+        bool dryRun = false, fetchWeather = false;
         double? latitude = null, longitude = null;
         int? utcOffset = null;
         Sky? forcedSky = null;
@@ -254,6 +254,7 @@ static class Program
         {
             string flag = args[i];
             if (flag == "--dry-run") { dryRun = true; continue; }
+            if (flag == "--weather") { fetchWeather = true; continue; }
             if (i + 1 >= args.Count) throw new UsageException(flag + " needs a value");
             string value = args[++i];
             int w, h;
@@ -290,6 +291,9 @@ static class Program
                         throw new UsageException("--sky wants one of: clear, cloudy, overcast, rain, snow, fog");
                     forcedSky = s;
                     break;
+                case "--forecast":
+                    forecastFile = value;
+                    break;
                 case "--utc-offset":
                     int offset;
                     if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out offset) || Math.Abs(offset) > 14 * 60)
@@ -301,10 +305,10 @@ static class Program
             }
         }
         string dayNote = "";
+        string day = date ?? DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         if (latitude.HasValue || longitude.HasValue)
         {
             if (!latitude.HasValue || !longitude.HasValue) throw new UsageException("--lat and --lon go together");
-            string day = date ?? DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             Daylight d = Daylight.For(latitude.Value, longitude.Value, day, utcOffset);
             if (d == null) throw new UsageException("--date wants yyyy-MM-dd");
             sunrise = d.Sunrise;
@@ -343,13 +347,50 @@ static class Program
             if (frames[i].Minute == frames[i - 1].Minute)
                 throw new UsageException(frames[i - 1].Label + " and " + frames[i].Label + " both land on " + Clock(frames[i].Minute) + "; day or night too short for this schedule");
 
+        // Weather: each frame takes its hour's sky, plus one more frame on every
+        // hour the sky changes, so the change shows on time.
+        Forecast forecast = null;
+        string forecastBody = null;
+        if (fetchWeather || forecastFile != null)
+        {
+            if (forcedSky.HasValue) throw new UsageException("--sky and a forecast don't mix");
+            if (forecastFile != null)
+            {
+                forecast = File.Exists(forecastFile) ? Forecast.Parse(File.ReadAllText(forecastFile), day) : null;
+                if (forecast == null) throw new UsageException(forecastFile + ": no complete hourly forecast for " + day);
+            }
+            else
+            {
+                if (!latitude.HasValue) throw new UsageException("--weather needs --lat and --lon");
+                forecastBody = Forecast.Fetch(latitude.Value, longitude.Value, day);
+                forecast = forecastBody == null ? null : Forecast.Parse(forecastBody, day);
+                if (forecast == null) throw new UsageException("no forecast for " + day + " from api.open-meteo.com");
+            }
+        }
+        if (forecast != null)
+        {
+            foreach (Frame f in frames) f.Sky = forecast.Hours[f.Minute / 60];
+            for (int hour = 1; hour < 24; hour++)
+            {
+                if (forecast.Hours[hour] == forecast.Hours[hour - 1] || frames.Any(f => f.Minute == hour * 60)) continue;
+                frames.Add(new Frame { Label = string.Format("hour-{0:D2}", hour), Minute = hour * 60, Sky = forecast.Hours[hour] });
+            }
+            frames = frames.OrderBy(f => f.Minute).ToList();
+            // Before the day's first frame the last one shows (it wraps past midnight).
+            if (frames[0].Minute > 0 && frames[frames.Count - 1].Sky != forecast.Hours[0])
+                frames.Insert(0, new Frame { Label = "hour-00", Minute = 0, Sky = forecast.Hours[0] });
+        }
+        string skyNote = forecast != null ? ", hourly weather" : forcedSky.HasValue ? ", sky " + Weather.Name(forcedSky.Value) : "";
+
         if (dryRun)
         {
-            Console.WriteLine(Header(sizes[0][0], sizes[0][1], sunrise, sunset, dayNote, seed));
+            Console.WriteLine(Header(sizes[0][0], sizes[0][1], sunrise, sunset, dayNote, seed) + skyNote);
             foreach (Frame f in frames) Console.WriteLine(Clock(f.Minute) + "  " + f.Name);
             return 0;
         }
 
+        Directory.CreateDirectory(outDir);
+        if (forecastBody != null) File.WriteAllText(Path.Combine(outDir, "forecast.json"), forecastBody);
         foreach (int[] size in sizes)
         {
             int width = size[0], height = size[1];
@@ -359,7 +400,7 @@ static class Program
             var scene = new Scene(width, height, seed);
             Console.WriteLine("scene {0}x{1}, seed {2}: {3:F2}s", width, height, seed, clock.Elapsed.TotalSeconds);
             var manifest = new List<string> {
-                Header(width, height, sunrise, sunset, dayNote, seed),
+                Header(width, height, sunrise, sunset, dayNote, seed) + skyNote,
                 "# HH:MM  file  [primary] [light] [dark]",
             };
             for (int i = 0; i < frames.Count; i++)
