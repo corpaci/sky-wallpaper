@@ -18,10 +18,25 @@ frames: about 0.5 KB near the start of the file differs.
 - a summit of domain-warped ridged multifractal noise, with a ragged snowcap
   that takes the sky's color and is brighter on the face toward the sun;
 - a rocky middle range;
-- rounded hills with tiered pines in woods and clearings;
-- a cabin whose window lights up from dusk to dawn.
+- rounded hills with spruce woods and clearings;
+- a cabin with a porch (lean-to roof, posts, railing with balusters, steps),
+  whose window lights up from dusk to dawn, with three tall spruces beside
+  it.
 
-Silhouettes are sampled four times per pixel column, so tree edges stay clean.
+The land is a silhouette line, sampled four times per pixel column. Trees and
+the porch are 2-D antialiased coverage, so sky shows between branches. Each
+spruce is built from tapered capsules:
+- a trunk with 21 whorls up a cone (a Fibonacci number), alternately 5 and 3
+  branches;
+- each branch turned by the golden angle (137.5°), so its sideways reach,
+  the cosine of the turn, varies the way phyllotaxis spaces real branches;
+- branches rise near the top, droop near the foot, and bend down toward
+  their tips;
+- each branch carries copies of itself 0.382 (1/φ²) as long: two levels deep
+  on big trees, one on small.
+
+Trees are slightly darker than the meadow behind them, and snow whitens only
+open ground.
 
 **Sunrise and sunset** come from NOAA's general solar position equations, for
 `--lat/--lon` and the date in the machine's time zone. The day is held

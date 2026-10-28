@@ -2,8 +2,20 @@
 // windows/parity.sh renders the same frames with both and compares pixels.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+
+/// A thick line that tapers from R0 to R1: a trunk, branch or plank.
+struct Capsule
+{
+    public readonly float X0, Y0, X1, Y1, R0, R1;
+
+    public Capsule(float x0, float y0, float x1, float y1, float r0, float r1)
+    {
+        X0 = x0; Y0 = y0; X1 = x1; Y1 = y1; R0 = r0; R1 = r1;
+    }
+}
 
 /// A stylized sun: a sine arc between sunrise and sunset, and a deeper one
 /// below the horizon at night. Altitudes in degrees, times in local minutes.
@@ -168,7 +180,7 @@ sealed class Scene
         new Layer(0.680f, 0.060f, 2.2f, 0.48f, 0.30f, true, false, 0, 0),
         new Layer(0.750f, 0.060f, 1.1f, 0.32f, 0.30f, false, false, 0.011f, 0.55f),
         new Layer(0.825f, 0.055f, 0.9f, 0.17f, 0.24f, false, false, 0.019f, 0.6f),
-        new Layer(0.910f, 0.045f, 0.7f, 0.00f, 0.12f, false, false, 0.034f, 0.65f),
+        new Layer(0.910f, 0.045f, 0.7f, 0.00f, 0.12f, false, false, 0.040f, 0.65f),
     };
     const int Sub = 4;  // silhouette samples per pixel column, for clean tree edges
 
@@ -176,7 +188,8 @@ sealed class Scene
     readonly float W, H;
     readonly float horizonY;     // where altitude 0 sits
     readonly float[] ground;     // [layer * width + x] terrain line y, trees excluded
-    readonly float[] top;        // [(layer * width + x) * Sub + s] silhouette y, trees and cabin included
+    readonly float[] top;        // [(layer * width + x) * Sub + s] silhouette y: land and cabin
+    readonly byte[] trees;       // [(layer * height + y) * width + x] coverage of trees and porch, 0…255
     readonly float[] snowLine;   // [x] for the snowy layer
     readonly float[] snowSlope;  // [x] its slope over ±3% of the height, so shading blends, not splits
     readonly float windowX0, windowX1, windowY0, windowY1;  // the cabin's window
@@ -198,7 +211,7 @@ sealed class Scene
         snowLine = new float[width];
         snowSlope = new float[width];
         int near = Layers.Length - 1;
-        float cabinX = 0.73f * W, cabinHalf = 0.016f * H;
+        float cabinX = 0.73f * W, cabinHalf = 0.019f * H;
 
         for (int l = 0; l < Layers.Length; l++)
         {
@@ -216,35 +229,12 @@ sealed class Scene
                     snowSlope[x] = (Terrain(layer, s, x + r + 0.5f) - Terrain(layer, s, x - r + 0.5f)) / (2 * r);
                 }
             }
-            if (layer.Trees <= 0) continue;
-
-            // Pines in woods and clearings along the ridge, tallest in front.
-            var rng = new SplitMix(unchecked(((ulong)s * 0x9e3779b97f4a7c15) | 1));
-            float tallest = layer.Trees * H;
-            float tx = -tallest;
-            while (tx < W + tallest)
-            {
-                float th = tallest * (0.6f + 0.7f * rng.Unit());
-                float hw = th * 0.24f;
-                tx += hw * (0.9f + 1.4f * rng.Unit());
-                float wood = Col.Fbm(tx / H * 2.2f, 2, s ^ 0x9e3779b9) * 0.5f + 0.5f;
-                if (wood > layer.Forest) continue;
-                if (l == near && Math.Abs(tx - cabinX) < cabinHalf + 2 * hw) continue;
-                float b = Terrain(layer, s, tx) + 0.06f * th;
-                int i0 = Math.Max((int)Math.Floor((tx - hw) * Sub), 0);
-                int i1 = Math.Min((int)Math.Ceiling((tx + hw) * Sub), width * Sub - 1);
-                for (int i = i0; i <= i1; i++)
-                {
-                    float y = Pine((i + 0.5f) / Sub - tx, th, hw, b);
-                    top[row * Sub + i] = Math.Min(top[row * Sub + i], y);
-                }
-            }
         }
+        Func<int, float, float> groundAt = (l, x) => ground[l * width + Math.Min(Math.Max((int)x, 0), width - 1)];
 
         // The cabin: walls, pitched roof, chimney; one window.
-        float groundAt = ground[near * width + Math.Min(Math.Max((int)cabinX, 0), width - 1)];
-        float cabinBase = groundAt + 0.004f * H;
-        float wallH = 0.020f * H, roofH = 0.017f * H;
+        float cabinBase = groundAt(near, cabinX) + 0.004f * H;
+        float wallH = 0.024f * H, roofH = 0.020f * H;
         for (int i = 0; i < width * Sub; i++)
         {
             float cx = (i + 0.5f) / Sub - cabinX;
@@ -258,6 +248,75 @@ sealed class Scene
         windowX1 = cabinX - 0.15f * cabinHalf;
         windowY0 = cabinBase - 0.72f * wallH;
         windowY1 = cabinBase - 0.38f * wallH;
+
+        // What stands on the land and lets the sky through between its parts
+        // (trees, the porch) is drawn as 2-D coverage, one plane per layer.
+        trees = new byte[Layers.Length * width * height];
+
+        // The porch, on the right: a lean-to roof on two posts, a railing with
+        // balusters, and steps down to the ground.
+        float porch0 = cabinX + cabinHalf, porch1 = porch0 + 0.9f * cabinHalf;
+        float floorY = cabinBase - 0.10f * wallH, railY = cabinBase - 0.48f * wallH;
+        float eaveX = porch1 + 0.1f * cabinHalf, eaveY0 = cabinBase - 0.95f * wallH, eaveY1 = cabinBase - 0.68f * wallH;
+        Func<float, float> eave = x => eaveY0 + (eaveY1 - eaveY0) * (x - porch0) / (eaveX - porch0);
+        var porch = new List<Capsule> {
+            new Capsule(porch0, eaveY0, eaveX, eaveY1, 0.055f * wallH, 0.05f * wallH),
+            new Capsule(porch0, floorY, porch1, floorY, 0.035f * wallH, 0.035f * wallH),
+            new Capsule(porch0, railY, porch1, railY, 0.02f * wallH, 0.02f * wallH),
+        };
+        foreach (float px in new[] { porch0 + 0.5f * (porch1 - porch0), porch1 })
+        {
+            float post = 0.045f * cabinHalf;
+            porch.Add(new Capsule(px, eave(px), px, groundAt(near, px) + 0.002f * H, post, post));
+        }
+        for (int k = 1; k < 6; k++)
+        {
+            float bx = porch0 + k / 6f * (porch1 - porch0);
+            porch.Add(new Capsule(bx, railY, bx, floorY, 0.012f * wallH, 0.012f * wallH));
+        }
+        float drop = groundAt(near, porch1 + 0.3f * cabinHalf) - floorY;
+        if (drop > 0.08f * wallH)
+        {
+            for (int k = 1; k <= 2; k++)
+            {
+                float sy = floorY + k / 3f * drop;
+                porch.Add(new Capsule(porch1, sy, porch1 + k * 0.22f * cabinHalf, sy, 0.03f * wallH, 0.03f * wallH));
+            }
+        }
+        Stamp(porch, trees, near, width, height);
+
+        // Spruces in woods and clearings along the ridges, tallest in front.
+        for (int l = 0; l < Layers.Length; l++)
+        {
+            Layer layer = Layers[l];
+            if (layer.Trees <= 0) continue;
+            uint s = Col.Hash32(unchecked(seed * 0x2545f491 + (uint)l));
+            var rng = new SplitMix(unchecked(((ulong)s * 0x9e3779b97f4a7c15) | 1));
+            float tallest = layer.Trees * H;
+            float tx = -tallest;
+            uint n = 0;
+            while (tx < W + tallest)
+            {
+                float th = tallest * (0.6f + 0.7f * rng.Unit());
+                float hw = th * 0.24f;
+                tx += hw * (0.9f + 1.4f * rng.Unit());
+                n = unchecked(n + 1);
+                float wood = Col.Fbm(tx / H * 2.2f, 2, s ^ 0x9e3779b9) * 0.5f + 0.5f;
+                if (wood > layer.Forest) continue;
+                if (l == near && tx > cabinX - cabinHalf - 2 * hw && tx < porch1 + 0.6f * cabinHalf + 2 * hw) continue;
+                Stamp(Spruce(tx, Terrain(layer, s, tx) + 0.06f * th, th, Col.Hash32(s ^ unchecked(n * 0x9e3779b1)), th > 30 ? 2 : 1),
+                      trees, l, width, height);
+            }
+        }
+        // Three tall ones by the cabin, where the branches can be seen.
+        float[] heroAt = { cabinX - 3.0f * cabinHalf, cabinX - 4.9f * cabinHalf, porch1 + 2.4f * cabinHalf };
+        float[] heroSize = { 0.105f, 0.075f, 0.088f };
+        for (int k = 0; k < 3; k++)
+        {
+            float th = heroSize[k] * H;
+            Stamp(Spruce(heroAt[k], groundAt(near, heroAt[k]) + 0.03f * th, th, Col.Hash32(seed ^ unchecked((uint)(k + 1) * 0x85ebca6b)), 2),
+                  trees, near, width, height);
+        }
 
         // Stars: mostly faint, a few bright, thinning toward the horizon.
         stars = new float[width * height * 3];
@@ -334,19 +393,85 @@ sealed class Scene
         return (layer.Base - layer.Amp * shape) * H;
     }
 
-    /// Top edge of a three-tier pine at `dx` from its trunk: stacked triangles,
-    /// each wider than the one above, so the outline steps out like a fir.
-    static float Pine(float dx, float th, float hw, float b)
+    /// A spruce as capsules. A tapering trunk carries 21 whorls (a Fibonacci
+    /// number) up a cone, alternately 5 and 3 branches each, every branch turned
+    /// by the golden angle from the one before, so its sideways reach (the
+    /// cosine of that turn) varies the way phyllotaxis spaces real branches.
+    /// Each branch rises near the top and droops near the foot, bends down
+    /// toward its tip, and carries smaller copies of itself 0.382 (1/φ²) as
+    /// long, `maxDepth` levels deep.
+    static List<Capsule> Spruce(float x, float b, float th, uint seed, int maxDepth)
     {
-        float adx = Math.Abs(dx);
-        float y = float.PositiveInfinity;
-        for (int k = 0; k < 3; k++)
+        var caps = new List<Capsule>();
+        var rng = new SplitMix(unchecked(((ulong)seed * 0x9e3779b97f4a7c15) | 1));
+        const float golden = 2.399963f;  // 137.5° in radians
+        float top = b - th;
+        caps.Add(new Capsule(x, b, x, top + 0.05f * th, 0.02f * th, 0.005f * th));
+        for (int k = 0; k < 21; k++)
         {
-            float tier = hw * (0.5f + 0.25f * k);
-            if (adx > tier) continue;
-            y = Math.Min(y, b - th + k * 0.24f * th + adx / tier * 0.42f * th);
+            float t = (k + 0.5f) / 21;  // up the trunk
+            float y = b - th * (0.10f + 0.86f * t);
+            float reach = th * (0.03f + 0.24f * Col.Pow(1 - t, 0.95f)) * (0.85f + 0.3f * rng.Unit());
+            int count = k % 2 == 0 ? 5 : 3;
+            for (int j = 0; j < count; j++)
+            {
+                float turn = (k * 8 + j) * golden + 0.3f * rng.Unit();
+                float side = (float)Math.Cos(turn);
+                Branch(caps, rng, x, y, reach * (0.3f + 0.7f * Math.Abs(side)), side < 0 ? -1 : 1, -0.35f + 0.6f * (1 - t),
+                       0.026f * th * (1 - 0.6f * t), 0, maxDepth);
+            }
         }
-        return y;
+        caps.Add(new Capsule(x, top + 0.08f * th, x, top, 0.006f * th, 0.002f * th));  // leader
+        return caps;
+    }
+
+    static void Branch(List<Capsule> caps, SplitMix rng, float x, float y, float length, float dir, float angle, float r, int depth, int maxDepth)
+    {
+        float px = x, py = y, a = angle;
+        for (int s = 0; s < 3; s++)
+        {
+            float len = length / 3;
+            float nx = px + dir * (float)Math.Cos(a) * len, ny = py + (float)Math.Sin(a) * len;
+            float r0 = r * (1 - 0.2f * s), r1 = r * (1 - 0.2f * (s + 1));
+            caps.Add(new Capsule(px, py, nx, ny, r0, r1));
+            if (depth < maxDepth)
+            {
+                float side = s % 2 == 0 ? -1 : 1;  // twigs alternate up and down
+                Branch(caps, rng, (px + nx) / 2, (py + ny) / 2, length * 0.382f * (1 - 0.25f * s), dir,
+                       a + side * 0.75f + 0.15f, r0 * 0.7f, depth + 1, maxDepth);
+            }
+            px = nx;
+            py = ny;
+            a += 0.22f + 0.06f * rng.Unit();
+        }
+    }
+
+    /// Antialiased coverage of capsules, kept as the maximum per pixel, into one
+    /// layer's plane of `cover`.
+    static void Stamp(List<Capsule> caps, byte[] cover, int plane, int width, int height)
+    {
+        int offset = plane * width * height;
+        foreach (Capsule c in caps)
+        {
+            float r = Math.Max(c.R0, c.R1);
+            int x0 = Math.Max((int)Math.Floor(Math.Min(c.X0, c.X1) - r - 1), 0), x1 = Math.Min((int)Math.Ceiling(Math.Max(c.X0, c.X1) + r + 1), width - 1);
+            int y0 = Math.Max((int)Math.Floor(Math.Min(c.Y0, c.Y1) - r - 1), 0), y1 = Math.Min((int)Math.Ceiling(Math.Max(c.Y0, c.Y1) + r + 1), height - 1);
+            if (x0 > x1 || y0 > y1) continue;
+            float dx = c.X1 - c.X0, dy = c.Y1 - c.Y0, len2 = dx * dx + dy * dy;
+            for (int py = y0; py <= y1; py++)
+            {
+                for (int px = x0; px <= x1; px++)
+                {
+                    float fx = px + 0.5f - c.X0, fy = py + 0.5f - c.Y0;
+                    float t = len2 > 0 ? Col.Clamp01((fx * dx + fy * dy) / len2) : 0;
+                    float ex = fx - t * dx, ey = fy - t * dy;
+                    float cov = Col.Clamp01(c.R0 + (c.R1 - c.R0) * t - Col.Sqrt(ex * ex + ey * ey) + 0.5f);
+                    byte v = (byte)Math.Round(cov * 255, MidpointRounding.AwayFromZero);
+                    int i = offset + py * width + px;
+                    if (v > cover[i]) cover[i] = v;
+                }
+            }
+        }
     }
 
     /// One frame as 8-bit sRGB, 3 bytes per pixel, dithered. `salt` varies the
@@ -488,13 +613,16 @@ sealed class Scene
                 for (int l = 0; l < Layers.Length; l++)
                 {
                     int t0 = (l * width + x) * Sub;
-                    float cov = 0;
-                    for (int s = 0; s < Sub; s++) cov += Col.Clamp01(fy - top[t0 + s] + 0.5f);
-                    cov /= Sub;
+                    float land = 0;
+                    for (int s = 0; s < Sub; s++) land += Col.Clamp01(fy - top[t0 + s] + 0.5f);
+                    land /= Sub;
+                    float tree = trees[(l * Height + y) * width + x] / 255f;
+                    float cov = Math.Max(land, tree);
                     if (cov == 0) continue;
                     Layer layer = Layers[l];
                     float gy = ground[l * width + x];
                     RGB tone = Col.Mix(tones[l], fog, layer.Mist * Col.Smoothstep(0, mistDepth, fy - gy));
+                    if (tree > 0) tone = tone * (1 - 0.18f * (1 - layer.Haze) * tree);  // spruce darker than meadow
                     if (layer.Snow)
                     {
                         float amount = Col.Smoothstep(snowLine[x] + 3, snowLine[x] - 3, fy);
@@ -511,8 +639,8 @@ sealed class Scene
                     }
                     if (w.Snow > 0 && !layer.Snow && fy >= gy)
                     {
-                        // Fresh snow on the ground; the pines above it stay dark.
-                        tone = Col.Mix(tone, Col.Mix(snowGround, fog, layer.Haze * 0.5f), 0.75f * w.Snow);
+                        // Fresh snow on open ground; the trees stay dark.
+                        tone = Col.Mix(tone, Col.Mix(snowGround, fog, layer.Haze * 0.5f), 0.75f * w.Snow * (1 - tree));
                     }
                     if (w.Fog > 0)
                     {

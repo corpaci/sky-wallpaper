@@ -118,11 +118,12 @@ struct Scene {
         Layer(base: 0.680, amp: 0.060, freq: 2.2, haze: 0.48, mist: 0.30, ridged: true, snow: false, trees: 0, forest: 0),
         Layer(base: 0.750, amp: 0.060, freq: 1.1, haze: 0.32, mist: 0.30, ridged: false, snow: false, trees: 0.011, forest: 0.55),
         Layer(base: 0.825, amp: 0.055, freq: 0.9, haze: 0.17, mist: 0.24, ridged: false, snow: false, trees: 0.019, forest: 0.6),
-        Layer(base: 0.910, amp: 0.045, freq: 0.7, haze: 0.00, mist: 0.12, ridged: false, snow: false, trees: 0.034, forest: 0.65),
+        Layer(base: 0.910, amp: 0.045, freq: 0.7, haze: 0.00, mist: 0.12, ridged: false, snow: false, trees: 0.040, forest: 0.65),
     ]
     static let sub = 4  // silhouette samples per pixel column, for clean tree edges
 
-    /// A small house on the nearest hill; its window lights up after sunset.
+    /// A small house with a porch on the nearest hill; its window lights up
+    /// after sunset.
     struct Cabin {
         let x, halfWidth: Float
         let window: (x0: Float, x1: Float, y0: Float, y1: Float)
@@ -132,7 +133,8 @@ struct Scene {
     private let W: Float, H: Float
     private let horizonY: Float   // where altitude 0 sits
     private let ground: [Float]   // [layer * width + x] terrain line y, trees excluded
-    private let top: [Float]      // [(layer * width + x) * sub + s] silhouette y, trees and cabin included
+    private let top: [Float]      // [(layer * width + x) * sub + s] silhouette y: land and cabin
+    private let trees: [UInt8]    // [(layer * height + y) * width + x] coverage of trees and porch, 0…255
     private let snowLine: [Float] // [x] for the snowy layer
     private let snowSlope: [Float] // [x] its slope over ±3% of the height, so shading blends, not splits
     private let cabin: Cabin
@@ -170,7 +172,7 @@ struct Scene {
         var snow = [Float](repeating: 0, count: width)
         var slopes = [Float](repeating: 0, count: width)
         let near = Self.layers.count - 1
-        let cabinX = 0.73 * w, cabinHalf = 0.016 * h
+        let cabinX = 0.73 * w, cabinHalf = 0.019 * h
 
         for (l, layer) in Self.layers.enumerated() {
             let s = hash32(seed &* 0x2545f491 &+ UInt32(l))
@@ -184,34 +186,12 @@ struct Scene {
                     slopes[x] = (terrain(layer, s, Float(x + r) + 0.5) - terrain(layer, s, Float(x - r) + 0.5)) / Float(2 * r)
                 }
             }
-            guard layer.trees > 0 else { continue }
-
-            // Pines in woods and clearings along the ridge, tallest in front.
-            var rng = SplitMix(state: UInt64(s) &* 0x9e3779b97f4a7c15 | 1)
-            let tallest = layer.trees * h
-            var tx = -tallest
-            while tx < w + tallest {
-                let th = tallest * (0.6 + 0.7 * rng.unit())
-                let hw = th * 0.24
-                tx += hw * (0.9 + 1.4 * rng.unit())
-                let wood = fbm(tx / h * 2.2, octaves: 2, seed: s ^ 0x9e3779b9) * 0.5 + 0.5
-                if wood > layer.forest { continue }
-                if l == near && abs(tx - cabinX) < cabinHalf + 2 * hw { continue }
-                let base = terrain(layer, s, tx) + 0.06 * th
-                let i0 = max(Int(((tx - hw) * Float(sub)).rounded(.down)), 0)
-                let i1 = min(Int(((tx + hw) * Float(sub)).rounded(.up)), width * sub - 1)
-                guard i0 <= i1 else { continue }
-                for i in i0...i1 {
-                    let y = pine((Float(i) + 0.5) / Float(sub) - tx, height: th, halfWidth: hw, base: base)
-                    topY[row * sub + i] = min(topY[row * sub + i], y)
-                }
-            }
         }
+        func groundAt(_ l: Int, _ x: Float) -> Float { groundY[l * width + min(max(Int(x), 0), width - 1)] }
 
         // The cabin: walls, pitched roof, chimney; one window.
-        let groundAt = groundY[near * width + min(max(Int(cabinX), 0), width - 1)]
-        let base = groundAt + 0.004 * h
-        let (wallH, roofH) = (0.020 * h, 0.017 * h)
+        let base = groundAt(near, cabinX) + 0.004 * h
+        let (wallH, roofH) = (0.024 * h, 0.020 * h)
         for i in 0..<(width * sub) {
             let dx = abs((Float(i) + 0.5) / Float(sub) - cabinX)
             guard dx <= cabinHalf * 1.08 else { continue }
@@ -220,12 +200,74 @@ struct Scene {
             if cx > 0.36 * cabinHalf && cx < 0.62 * cabinHalf { y = min(y, base - wallH - 0.95 * roofH) }
             topY[(near * width) * sub + i] = min(topY[(near * width) * sub + i], y)
         }
+
+        // What stands on the land and lets the sky through between its parts
+        // (trees, the porch) is drawn as 2-D coverage, one plane per layer.
+        var cover = [UInt8](repeating: 0, count: Self.layers.count * width * height)
+
+        // The porch, on the right: a lean-to roof on two posts, a railing with
+        // balusters, and steps down to the ground.
+        let porch0 = cabinX + cabinHalf, porch1 = porch0 + 0.9 * cabinHalf
+        let floorY = base - 0.10 * wallH, railY = base - 0.48 * wallH
+        let (eaveX, eaveY0, eaveY1) = (porch1 + 0.1 * cabinHalf, base - 0.95 * wallH, base - 0.68 * wallH)
+        func eave(_ x: Float) -> Float { eaveY0 + (eaveY1 - eaveY0) * (x - porch0) / (eaveX - porch0) }
+        var porch = [
+            Capsule(x0: porch0, y0: eaveY0, x1: eaveX, y1: eaveY1, r0: 0.055 * wallH, r1: 0.05 * wallH),
+            Capsule(x0: porch0, y0: floorY, x1: porch1, y1: floorY, r0: 0.035 * wallH, r1: 0.035 * wallH),
+            Capsule(x0: porch0, y0: railY, x1: porch1, y1: railY, r0: 0.02 * wallH, r1: 0.02 * wallH),
+        ]
+        for px in [porch0 + 0.5 * (porch1 - porch0), porch1] {
+            let post = 0.045 * cabinHalf
+            porch.append(Capsule(x0: px, y0: eave(px), x1: px, y1: groundAt(near, px) + 0.002 * h, r0: post, r1: post))
+        }
+        for k in 1..<6 {
+            let bx = porch0 + Float(k) / 6 * (porch1 - porch0)
+            porch.append(Capsule(x0: bx, y0: railY, x1: bx, y1: floorY, r0: 0.012 * wallH, r1: 0.012 * wallH))
+        }
+        let drop = groundAt(near, porch1 + 0.3 * cabinHalf) - floorY
+        if drop > 0.08 * wallH {
+            for k in 1...2 {
+                let sy = floorY + Float(k) / 3 * drop
+                porch.append(Capsule(x0: porch1, y0: sy, x1: porch1 + Float(k) * 0.22 * cabinHalf, y1: sy, r0: 0.03 * wallH, r1: 0.03 * wallH))
+            }
+        }
+        stamp(porch, into: &cover, plane: near, width: width, height: height)
+
+        // Spruces in woods and clearings along the ridges, tallest in front.
+        for (l, layer) in Self.layers.enumerated() where layer.trees > 0 {
+            let s = hash32(seed &* 0x2545f491 &+ UInt32(l))
+            var rng = SplitMix(state: UInt64(s) &* 0x9e3779b97f4a7c15 | 1)
+            let tallest = layer.trees * h
+            var (tx, n): (Float, UInt32) = (-tallest, 0)
+            while tx < w + tallest {
+                let th = tallest * (0.6 + 0.7 * rng.unit())
+                let hw = th * 0.24
+                tx += hw * (0.9 + 1.4 * rng.unit())
+                n &+= 1
+                let wood = fbm(tx / h * 2.2, octaves: 2, seed: s ^ 0x9e3779b9) * 0.5 + 0.5
+                if wood > layer.forest { continue }
+                if l == near && tx > cabinX - cabinHalf - 2 * hw && tx < porch1 + 0.6 * cabinHalf + 2 * hw { continue }
+                let tree = spruce(x: tx, base: terrain(layer, s, tx) + 0.06 * th, height: th,
+                                  seed: hash32(s ^ (n &* 0x9e3779b1)), depth: th > 30 ? 2 : 1)
+                stamp(tree, into: &cover, plane: l, width: width, height: height)
+            }
+        }
+        // Three tall ones by the cabin, where the branches can be seen.
+        for (k, (at, size)) in [(cabinX - 3.0 * cabinHalf, Float(0.105)), (cabinX - 4.9 * cabinHalf, 0.075),
+                                (porch1 + 2.4 * cabinHalf, 0.088)].enumerated() {
+            let th = size * h
+            stamp(spruce(x: at, base: groundAt(near, at) + 0.03 * th, height: th,
+                         seed: hash32(seed ^ (UInt32(k + 1) &* 0x85ebca6b)), depth: 2),
+                  into: &cover, plane: near, width: width, height: height)
+        }
+
         cabin = Cabin(x: cabinX, halfWidth: cabinHalf,
                       window: (cabinX - 0.55 * cabinHalf, cabinX - 0.15 * cabinHalf,
                                base - 0.72 * wallH, base - 0.38 * wallH))
 
         ground = groundY
         top = topY
+        trees = cover
         snowLine = snow
         snowSlope = slopes
 
@@ -393,13 +435,16 @@ struct Scene {
 
                     for l in 0..<layerCount {
                         let t0 = (l * width + x) * sub
-                        var cov: Float = 0
-                        for s in 0..<sub { cov += clamp01(fy - top[t0 + s] + 0.5) }
-                        cov /= Float(sub)
+                        var land: Float = 0
+                        for s in 0..<sub { land += clamp01(fy - top[t0 + s] + 0.5) }
+                        land /= Float(sub)
+                        let tree = Float(trees[(l * height + y) * width + x]) / 255
+                        let cov = max(land, tree)
                         if cov == 0 { continue }
                         let layer = Self.layers[l]
                         let gy = ground[l * width + x]
                         var tone = mix(tones[l], fog, layer.mist * smoothstep(0, mistDepth, fy - gy))
+                        if tree > 0 { tone = tone * (1 - 0.18 * (1 - layer.haze) * tree) }  // spruce darker than meadow
                         if layer.snow {
                             let amount = smoothstep(snowLine[x] + 3, snowLine[x] - 3, fy)
                             if amount > 0 {
@@ -413,8 +458,8 @@ struct Scene {
                             }
                         }
                         if w.snow > 0 && !layer.snow && fy >= gy {
-                            // Fresh snow on the ground; the pines above it stay dark.
-                            tone = mix(tone, mix(snowGround, fog, layer.haze * 0.5), 0.75 * w.snow)
+                            // Fresh snow on open ground; the trees stay dark.
+                            tone = mix(tone, mix(snowGround, fog, layer.haze * 0.5), 0.75 * w.snow * (1 - tree))
                         }
                         if w.fog > 0 {
                             tone = mix(tone, fogColor, w.fog * (0.9 - 0.12 * Float(l)))
@@ -461,17 +506,79 @@ struct Scene {
     }
 }
 
-/// Top edge of a three-tier pine at `dx` from its trunk: stacked triangles,
-/// each wider than the one above, so the outline steps out like a fir.
-private func pine(_ dx: Float, height th: Float, halfWidth hw: Float, base: Float) -> Float {
-    let adx = abs(dx)
-    var y = Float.infinity
-    for k in 0..<3 {
-        let tier = hw * (0.5 + 0.25 * Float(k))
-        guard adx <= tier else { continue }
-        y = min(y, base - th + Float(k) * 0.24 * th + adx / tier * 0.42 * th)
+/// A thick line that tapers from `r0` to `r1`: a trunk, branch or plank.
+struct Capsule {
+    let x0, y0, x1, y1, r0, r1: Float
+}
+
+/// A spruce as capsules. A tapering trunk carries 21 whorls (a Fibonacci
+/// number) up a cone, alternately 5 and 3 branches each, every branch turned
+/// by the golden angle from the one before, so its sideways reach (the
+/// cosine of that turn) varies the way phyllotaxis spaces real branches.
+/// Each branch rises near the top and droops near the foot, bends down
+/// toward its tip, and carries smaller copies of itself 0.382 (1/φ²) as
+/// long, `depth` levels deep.
+func spruce(x: Float, base: Float, height th: Float, seed: UInt32, depth maxDepth: Int) -> [Capsule] {
+    var caps: [Capsule] = []
+    var rng = SplitMix(state: UInt64(seed) &* 0x9e3779b97f4a7c15 | 1)
+    let golden: Float = 2.399963  // 137.5° in radians
+
+    func branch(_ x: Float, _ y: Float, _ length: Float, _ dir: Float, _ angle: Float, _ r: Float, _ depth: Int) {
+        var (px, py, a) = (x, y, angle)
+        for s in 0..<3 {
+            let len = length / 3
+            let nx = px + dir * cosf(a) * len, ny = py + sinf(a) * len
+            let r0 = r * (1 - 0.2 * Float(s)), r1 = r * (1 - 0.2 * Float(s + 1))
+            caps.append(Capsule(x0: px, y0: py, x1: nx, y1: ny, r0: r0, r1: r1))
+            if depth < maxDepth {
+                let side: Float = s % 2 == 0 ? -1 : 1  // twigs alternate up and down
+                branch((px + nx) / 2, (py + ny) / 2, length * 0.382 * (1 - 0.25 * Float(s)), dir,
+                       a + side * 0.75 + 0.15, r0 * 0.7, depth + 1)
+            }
+            (px, py) = (nx, ny)
+            a += 0.22 + 0.06 * rng.unit()
+        }
     }
-    return y
+
+    let top = base - th
+    caps.append(Capsule(x0: x, y0: base, x1: x, y1: top + 0.05 * th, r0: 0.02 * th, r1: 0.005 * th))
+    for k in 0..<21 {
+        let t = (Float(k) + 0.5) / 21  // up the trunk
+        let y = base - th * (0.10 + 0.86 * t)
+        let reach = th * (0.03 + 0.24 * powf(1 - t, 0.95)) * (0.85 + 0.3 * rng.unit())
+        for j in 0..<(k % 2 == 0 ? 5 : 3) {
+            let turn = Float(k * 8 + j) * golden + 0.3 * rng.unit()
+            let side = cosf(turn)
+            branch(x, y, reach * (0.3 + 0.7 * abs(side)), side < 0 ? -1 : 1, -0.35 + 0.6 * (1 - t),
+                   0.026 * th * (1 - 0.6 * t), 0)
+        }
+    }
+    caps.append(Capsule(x0: x, y0: top + 0.08 * th, x1: x, y1: top, r0: 0.006 * th, r1: 0.002 * th))  // leader
+    return caps
+}
+
+/// Antialiased coverage of capsules, kept as the maximum per pixel, into one
+/// layer's plane of `cover`.
+func stamp(_ caps: [Capsule], into cover: inout [UInt8], plane: Int, width: Int, height: Int) {
+    let offset = plane * width * height
+    for c in caps {
+        let r = max(c.r0, c.r1)
+        let x0 = max(Int(floorf(min(c.x0, c.x1) - r - 1)), 0), x1 = min(Int(ceilf(max(c.x0, c.x1) + r + 1)), width - 1)
+        let y0 = max(Int(floorf(min(c.y0, c.y1) - r - 1)), 0), y1 = min(Int(ceilf(max(c.y0, c.y1) + r + 1)), height - 1)
+        guard x0 <= x1, y0 <= y1 else { continue }
+        let dx = c.x1 - c.x0, dy = c.y1 - c.y0, len2 = dx * dx + dy * dy
+        for py in y0...y1 {
+            for px in x0...x1 {
+                let fx = Float(px) + 0.5 - c.x0, fy = Float(py) + 0.5 - c.y0
+                let t = len2 > 0 ? clamp01((fx * dx + fy * dy) / len2) : 0
+                let ex = fx - t * dx, ey = fy - t * dy
+                let cov = clamp01(c.r0 + (c.r1 - c.r0) * t - (ex * ex + ey * ey).squareRoot() + 0.5)
+                let v = UInt8((cov * 255).rounded())
+                let i = offset + py * width + px
+                if v > cover[i] { cover[i] = v }
+            }
+        }
+    }
 }
 
 /// Linear → sRGB 8-bit with a soft highlight shoulder and ±1 LSB triangular

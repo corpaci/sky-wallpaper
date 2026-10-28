@@ -1,7 +1,7 @@
 # Sky wallpaper
 
 A dynamic wallpaper for macOS and Windows. It renders a day of a snowcapped
-mountain above pine forests and a little cabin, as still frames, and shows
+mountain above spruce forests and a little cabin with a porch, as still frames, and shows
 the right one for the time of day. Optionally, it follows your real sunrise,
 sunset and hourly weather.
 
