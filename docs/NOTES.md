@@ -74,6 +74,9 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
   download on demand, so there is no local `h24` file to compare against. The
   `ti`/`t`/`i` keys and local-clock `t` come from the open-source
   [wallpapper](https://github.com/mczachurski/wallpapper) encoder.
+- **Local time, on screen (owner, 2026-10-28).** At 19:11 CET (18:11 UTC) the
+  built-in screen showed the night frame scheduled for 18:19, not the blue-hour
+  frame for 17:31. So macOS reads `t` as local wall-clock time.
 - **Read-back.** `heicpack` reopens every file it writes and checks the image
   count and schedule.
 - **Banding vs HEIC quality.** HEVC smooths the dither away at low quality.
@@ -146,9 +149,6 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
   To watch it:
   `ls ~/Library/Containers/com.apple.wallpaper.extension.image/Data/Library/Caches/*.heic | wc -l`.
 - **macOS first 00:05 run.** The scheduled trigger hasn't fired yet.
-- **macOS local time.** It is unconfirmed that macOS reads `t` as local time,
-  not UTC. To check, compare the frame on screen with `heicpack --inspect` for
-  the current time.
 - **Windows `tick`.** It has never run on Windows:
   - `schtasks /XML` accepting this XML;
   - re-registering the task from inside its own run;
