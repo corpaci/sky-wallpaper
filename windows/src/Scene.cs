@@ -206,7 +206,7 @@ sealed class Scene
     readonly float[] snowLine;   // [x] for the snowy layer
     readonly float[] snowSlope;  // [x] its slope over ±3% of the height, so shading blends, not splits
     readonly float windowX0, windowX1, windowY0, windowY1;  // the cabin's window
-    readonly float[] flakes;     // snowflake coverage, full frame
+    readonly float[] flakes;     // glints of ice in the air, full frame
     readonly float[] glintPower; // drops on the wet meadow, full frame
     readonly byte[] glintHue;    // and the color each catches, 0 = violet … 255 = red
     readonly uint seed;
@@ -332,17 +332,18 @@ sealed class Scene
                   trees, near, width, height);
         }
 
-        // Snowflakes: soft dots, the big near ones rarer. Drawn only when it snows.
+        // Ice in the cold air after snow ("diamond dust"): tiny points that
+        // catch the light, the big near ones rarer. Drawn only after snow.
         float scale = H / 1664;
         flakes = new float[width * height];
         var flakeRng = new SplitMix(unchecked(((ulong)seed * 0xd1b54a32d192ed03) | 1));
-        int flakeCount = width * height / 2200;
+        int flakeCount = width * height / 9000;
         for (int n = 0; n < flakeCount; n++)
         {
             float fx = flakeRng.Unit() * W, fy = flakeRng.Unit() * H;
             float nearness = Col.Pow(flakeRng.Unit(), 3);
-            float bright = 0.55f + 0.45f * flakeRng.Unit();
-            float sigma = (0.6f + 1.8f * nearness) * scale;
+            float bright = 0.4f + 0.6f * Col.Pow(flakeRng.Unit(), 2);
+            float sigma = (0.45f + 0.9f * nearness) * scale;
             int reach = (int)Math.Ceiling(3 * sigma);
             int cxf = (int)fx, cyf = (int)fy;
             for (int py = Math.Max(cyf - reach, 0); py <= Math.Min(cyf + reach, height - 1); py++)
@@ -690,20 +691,9 @@ sealed class Scene
             });
         }
 
-        // Weather. Clouds: wide, flat shapes from 2-D noise, thinning into the
-        // distance, lit on the side toward the sun (pink-edged at sunset). They
-        // drift through the day. Under overcast they close into a soft deck.
-        RGB cloudLit = Col.MixOklab(pal.Horizon, pal.Glow, 0.5f) * 1.15f;
-        RGB cloudShade = Col.Desaturate(Col.MixOklab(pal.Mid, pal.Zenith, 0.5f), 0.5f) * 0.85f;
-        float cloudEdge = 0.62f - 0.3f * w.Clouds - 0.25f * w.Overcast, cloudSoft = 0.12f + 0.3f * w.Overcast;
-        float cloudStep = 0.02f * H, drift = minute * 0.002f;
-        uint cloudSeed = Col.Hash32(seed ^ 0x51ed270b);
-        float cloudH = H;
-        Func<float, float, float> cloud = (x, y) =>
-        {
-            float n = Col.Fbm2(x / cloudH * 1.6f + drift, y / cloudH * 5.5f, 5, cloudSeed) * 0.5f + 0.5f;
-            return Col.Smoothstep(cloudEdge, cloudEdge + cloudSoft, n) * (1 - Col.Smoothstep(horizon * 0.75f, horizon * 1.02f, y));
-        };
+        // Weather. Clouds drift a little through the day.
+        float drift = minute * 0.002f;
+        RGB iceColor = Col.Mix(new RGB(1, 1, 1), pal.Glow, 0.3f) * (0.25f + 0.75f * Col.Smoothstep(-6, 10, alt));  // glitters in the sun
         RGB fogColor = Col.MixOklab(pal.Horizon, Col.Desaturate(pal.Mid, 0.6f), 0.4f);
 
         // Overcast: the view from above it, a sea of clouds over the world
@@ -712,7 +702,8 @@ sealed class Scene
         // billows (|noise|, with creases between, as cumulus tops go) on a slow
         // swell, a few domes rising higher, all lit from the sun's side, or the
         // moon's at night. Far off, the lumps grow too small to see and it fades
-        // into haze. Seen from the cabin's hill it's a layer: its lumpy, soft
+        // into haze. Cloudy days break it open: through wide gaps the world
+        // below shows. Seen from the cabin's hill it's a layer: its lumpy, soft
         // base hangs at the height of the tall spruces' tops, which fade up into
         // it; under it, the hills beyond lie in its grey shade.
         RGB seaLit = Col.MixOklab(pal.Horizon, pal.Glow, 0.5f) * 1.3f;
@@ -725,12 +716,21 @@ sealed class Scene
         int seaRows = w.Sea > 0 ? Height - seaRow0 : 0;
         var seaTopY = new float[w.Sea > 0 ? width : 0];
         float seaSoft = 0.015f * H;
+        // How much cloud there is where the sea is z deep at pixel x: 1 on
+        // overcast days, open gaps on cloudy ones.
+        Func<float, float, float> cloudiness = (sx, sz) =>
+        {
+            if (!(w.Broken > 0)) return 1;
+            float su = (sx - w2) * sz / seaFocal + drift * 3;
+            float open = -0.45f + 0.9f * w.Broken;  // the noise below this is a gap
+            return Col.Smoothstep(open - 0.06f, open + 0.06f, Col.Fbm2(su * 0.12f, sz * 0.12f, 3, seaSeed ^ 0x85ebca6b));
+        };
         var seaEdge = new float[w.Sea > 0 ? width : 0];  // its base, over the hill
         for (int x = 0; x < seaEdge.Length; x++)
             seaEdge[x] = ground[(Layers.Length - 1) * width + x] - 0.06f * H
                 + 0.012f * H * Math.Abs(Col.Fbm(x / H * 9 + drift * 3, 3, seaSeed ^ 0x5bd1e995));
         var seaLight = new float[width * seaRows];
-        var seaHaze = new float[width * seaRows];
+        var seaDepth = new float[width * seaRows];  // how far off, for haze and gaps
         var seaCover = new float[width * seaRows];
         if (seaRows > 0)
         {
@@ -761,7 +761,7 @@ sealed class Scene
                 float across = x + 0.5f - w2;
                 int filled = height;  // rows from here down are drawn
                 float crest = H;      // the surface's highest point so far
-                float lastY = H * 2, lastLit = 0.5f, lastHaze = 0;  // the step before, nearer
+                float lastY = H * 2, lastLit = 0.5f, lastZ = 1.5f;  // the step before, nearer
                 for (float z = 1.5f; z < 80; z *= 1.008f)
                 {
                     float u = across * z / seaFocal + drift * 3;
@@ -773,7 +773,6 @@ sealed class Scene
                     float nl = Col.Sqrt(dx * dx + 1 + dz * dz);
                     float lambert = Math.Max((-dx * toLightX + toLightY - dz * toLightZ) / nl, 0);
                     float lit = Col.Clamp01(0.5f + seaContrast * (0.65f * lambert - 0.3f) + 0.15f * s);
-                    float haze = Col.Smoothstep(4, 45, z);
                     if (row < filled)
                     {
                         // Rows between this step and the one before blend the two, so steps don't show.
@@ -782,20 +781,20 @@ sealed class Scene
                             float t = lastY > y ? Col.Clamp01((r + 0.5f - y) / (lastY - y)) : 0;
                             int i = (r - seaRow0) * width + x;
                             seaLight[i] = Col.Lerp(lit, lastLit, t);
-                            seaHaze[i] = Col.Lerp(haze, lastHaze, t);
+                            seaDepth[i] = Col.Lerp(z, lastZ, t);
                             seaCover[i] = 1;
                         }
                         filled = row;
                         crest = y;
                     }
-                    lastY = y; lastLit = lit; lastHaze = haze;
+                    lastY = y; lastLit = lit; lastZ = z;
                 }
                 // The top edge, antialiased: the row above the last drawn gets the fraction it's covered.
                 if (filled > seaRow0 && filled < height)
                 {
                     int i = (filled - seaRow0) * width + x, above = i - width;
                     seaLight[above] = seaLight[i];
-                    seaHaze[above] = seaHaze[i];
+                    seaDepth[above] = seaDepth[i];
                     seaCover[above] = Col.Clamp01(filled - crest);
                 }
                 seaTopY[x] = crest;
@@ -817,7 +816,6 @@ sealed class Scene
         float glintGain = w.Wet * Col.Smoothstep(-2, 4, alt) * (0.6f + 0.4f * (1 - Col.Smoothstep(10, 35, alt)));
         var hues = new RGB[w.Wet > 0 ? 256 : 0];
         for (int i = 0; i < hues.Length; i++) hues[i] = Col.Spectrum(i / 255f);
-        RGB flakeColor = Col.MixOklab(pal.Mid, new RGB(1, 1, 1), 0.6f);
         RGB snowGround = Col.MixOklab(pal.Mid, pal.Horizon, 0.5f) * 1.15f;
         var gradient = new RGB[Height];
         for (int y = 0; y < Height; y++)
@@ -894,18 +892,6 @@ sealed class Scene
                         c = Col.Mix(c, air + halo, disk * opaque) + moonColor * (albedo * (lit * moonGain + earthshine) * disk);
                     }
                 }
-                if (w.Clouds > 0 && fy < horizonY * 1.02f)
-                {
-                    float cd = cloud(fx, fy);
-                    if (cd > 0)
-                    {
-                        float clx = sunX - fx, cly = sunY - fy;
-                        float len = Math.Max(Col.Sqrt(clx * clx + cly * cly), 1);
-                        float ahead = cloud(fx + clx / len * cloudStep, fy + cly / len * cloudStep);
-                        float light = Col.Clamp01(0.55f + 1.8f * (cd - ahead));
-                        c = Col.Mix(c, Col.Mix(cloudShade, cloudLit, light) + pal.Glow * (g * 0.6f), cd * 0.96f);
-                    }
-                }
                 if (w.Fog > 0)
                 {
                     c = Col.Mix(c, fogColor, w.Fog * 0.6f * Col.Smoothstep(0.3f * H, horizonY, fy));
@@ -974,7 +960,7 @@ sealed class Scene
                             tone = Col.Mix(tone, seaShade * 0.6f, 0.3f * w.Sea);  // the hills beyond, in the clouds' shade
                         else if (fy < gy)
                             // Treetops fade up into the clouds' base.
-                            tone = Col.Mix(tone, seaHazeColor, 0.6f * w.Sea * Col.Smoothstep(seaEdge[x] + 0.035f * H, seaEdge[x], fy));
+                            tone = Col.Mix(tone, seaHazeColor, 0.6f * w.Sea * Col.Clamp01(1 - 2 * w.Broken) * Col.Smoothstep(seaEdge[x] + 0.035f * H, seaEdge[x], fy));
                     }
                     c = cov == 1 ? tone : Col.Mix(c, tone, cov);
                     frontTree = frontTree * (1 - cov) + tree;
@@ -990,9 +976,10 @@ sealed class Scene
                     // The sea of clouds, down to its soft base, which wraps the treetops.
                     int fsi = (y - seaRow0) * width + x;
                     float frontCov = seaCover[fsi] * w.Sea * Col.Smoothstep(seaEdge[x] + seaSoft, seaEdge[x] - 0.5f * seaSoft, fy);
+                    if (frontCov > 0) frontCov *= cloudiness(fx, seaDepth[fsi]);
                     if (frontCov > 0)
                     {
-                        RGB frontTone = Col.MixOklab(Col.Mix(seaShade, seaLit, seaLight[fsi]), seaHazeColor, seaHaze[fsi]);
+                        RGB frontTone = Col.MixOklab(Col.Mix(seaShade, seaLit, seaLight[fsi]), seaHazeColor, Col.Smoothstep(4, 45, seaDepth[fsi]));
                         c = Col.Mix(c, frontTone + pal.Glow * (g * 0.7f), frontCov);
                     }
                 }
@@ -1015,7 +1002,7 @@ sealed class Scene
                 if (w.Snow > 0)
                 {
                     float f = flakes[y * width + x];
-                    if (f > 0.002f) c = Col.Mix(c, flakeColor, Math.Min(f * w.Snow, 1f));
+                    if (f > 0.002f) c = c + iceColor * (0.6f * f * w.Snow);
                 }
 
                 int o = (y * width + x) * 3;

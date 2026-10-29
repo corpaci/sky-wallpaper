@@ -8,27 +8,29 @@ enum Sky: String, CaseIterable {
 /// The renderer's knobs for a `Sky`, each 0…1. The renderer only reads these,
 /// so what a class looks like is tuned here, in one place.
 ///
-/// Grey weather isn't mirrored; the scene shows what's beyond it. Overcast
-/// is the view from above the deck, a sunlit sea of clouds, with the sky,
-/// sun, moon and stars clear overhead. Fog lies low in the far valleys under
-/// a clear sky. Rain is the moment after: wet light, a rainbow opposite the
-/// sun, colored glints on the grass.
+/// Grey weather isn't mirrored, and no cloud ever covers the sky; the scene
+/// shows what's beyond the weather. Overcast is the view from above it, a
+/// sea of clouds over the world below; cloudy, the same sea broken open, the
+/// hills showing through. Fog lies low in the far valleys. Rain is the
+/// moment after: wet light, a rainbow opposite the sun, colored glints on the
+/// grass. Snow is the clear morning after: fresh snow, and ice glittering in
+/// the air.
 struct Weather {
-    var clouds: Float = 0    // cover of drifting clouds in the sky
-    var overcast: Float = 0  // a grey deck: dims and greys the palette, hides sun and stars
-    var sea: Float = 0       // a sea of clouds below the cabin's hill, ranges breaking through
+    var overcast: Float = 0  // greys and dims the palette, veils sun, moon and stars
+    var sea: Float = 0       // a sea of clouds below, ranges breaking through
+    var broken: Float = 0    // how much of the sea is open, showing the world below
     var valley: Float = 0    // fog lakes at the feet of the far hills
     var wet: Float = 0       // after rain: rainbow opposite a low sun, glints on the grass
-    var snow: Float = 0      // flake density; also whitens the ground under the pines
+    var snow: Float = 0      // fresh snow on open ground, and ice glittering in the air
     var fog: Float = 0       // haze that swallows far layers first
 
     init(_ sky: Sky) {
         switch sky {
         case .clear: break
-        case .cloudy: (clouds, overcast) = (0.5, 0.1)
+        case .cloudy: (sea, broken) = (1, 0.5)
         case .overcast: sea = 1
-        case .rain: (clouds, overcast, wet, fog) = (0.45, 0.08, 1, 0.12)
-        case .snow: (clouds, overcast, snow, fog) = (1, 0.6, 1, 0.3)
+        case .rain: (overcast, wet, fog) = (0.05, 1, 0.1)
+        case .snow: (snow, fog) = (1, 0.1)
         case .fog: (valley, fog) = (1, 0.08)
         }
     }

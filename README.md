@@ -7,7 +7,7 @@ in its phase and place, the planets, the bright stars, the Milky Way.
 Optionally, it follows your real sunrise, sunset and hourly weather.
 
 ![The frames of one clear day, from midnight to night](docs/preview.jpg)
-![Overcast as a sea of clouds, after rain, fog lakes, cloudy, snow](docs/weather.jpg)
+![Overcast as a sea of clouds, after rain, fog lakes, cloudy as a broken sea, the morning after snow](docs/weather.jpg)
 ![A crescent at dusk and a waning gibbous moon over Vienna; the July Milky Way over Vienna and over Sydney](docs/night.jpg)
 
 **Why it's cheap:** the desktop shows a still image and swaps it at set
@@ -134,7 +134,8 @@ at your time zone's longitude.
 
 ## Weather and privacy
 
-Grey weather isn't mirrored back at you; the sky shows what's beyond it:
+Grey weather isn't mirrored back at you, and no cloud ever covers the sky;
+the scene shows what's beyond the weather:
 - **Overcast:** you're above it. A sunlit sea of clouds covers the world
   below, its base at the tops of the tall spruces by the cabin, the summit
   and far ridges rising out of it, and sun, moon and stars clear overhead.
@@ -142,7 +143,10 @@ Grey weather isn't mirrored back at you; the sky shows what's beyond it:
 - **Rain:** the moment after. A rainbow stands opposite the sun while it's
   low (from this view, at the far edge, with its faint second bow), in the
   rain over the far range, and the wet grass glints in every color.
-- **Snow and cloudy days** are shown as they are.
+- **Cloudy:** the same sea of clouds, broken: banks of cloud lie in the
+  valleys, with the hills showing between them.
+- **Snow:** the clear morning after: fresh snow on open ground, and ice
+  glittering in the air.
 
 Weather comes from [Open-Meteo](https://open-meteo.com): free, no account,
 no key. Once a day, one request carries the date and your coordinates

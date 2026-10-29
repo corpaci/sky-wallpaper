@@ -48,8 +48,8 @@ between 3 and 21 hours, centered on solar noon, so every frame keeps its own
 minute. The manifest header says when that happens (polar night or day).
 
 **Weather.** Each sky (clear, cloudy, overcast, rain, snow, fog) maps to knobs
-in `Weather`: clouds, overcast, sea, valley, wet, snow and fog. Grey weather
-isn't mirrored:
+in `Weather`: overcast, sea, broken, valley, wet, snow and fog. Grey weather
+isn't mirrored, and no cloud covers the sky:
 - **Overcast** is a sea of clouds seen from above, its surface rendered in
   perspective column by column, near billows hiding far ones:
   - the billows are |noise| lumps with creases between, on a slow swell,
@@ -60,7 +60,13 @@ isn't mirrored:
   - its soft, lumpy base hangs at the height of the tall spruces' tops, which
     fade up into it; under it the hills beyond lie in grey shade, while the
     cabin's hill stays in clear light.
+- **Cloudy** is the same sea, broken: noise over the cloud surface, looked
+  up per pixel from its depth there, opens wide gaps that show the land
+  beneath, so banks of cloud lie in the valleys.
 - **Fog** sinks each hill's foot into bright fog lakes, least in front.
+- **Snow** is the clear morning after: fresh snow on open ground (the trees
+  stay dark), and sparse points of ice in the air ("diamond dust") that
+  glitter more in sunlight.
 - **Rain** is the moment after:
   - a primary and secondary bow (reversed colors, Alexander's dark band, a
     brighter sky inside) centred opposite the sun's side of the view, sinking

@@ -11,29 +11,31 @@ enum Sky { Clear, Cloudy, Overcast, Rain, Snow, Fog }
 /// The renderer's knobs for a `Sky`, each 0…1. The renderer only reads these,
 /// so what a class looks like is tuned here, in one place.
 ///
-/// Grey weather isn't mirrored; the scene shows what's beyond it. Overcast
-/// is the view from above the deck, a sunlit sea of clouds, with the sky,
-/// sun, moon and stars clear overhead. Fog lies low in the far valleys under
-/// a clear sky. Rain is the moment after: wet light, a rainbow opposite the
-/// sun, colored glints on the grass.
+/// Grey weather isn't mirrored, and no cloud ever covers the sky; the scene
+/// shows what's beyond the weather. Overcast is the view from above it, a
+/// sea of clouds over the world below; cloudy, the same sea broken open, the
+/// hills showing through. Fog lies low in the far valleys. Rain is the
+/// moment after: wet light, a rainbow opposite the sun, colored glints on the
+/// grass. Snow is the clear morning after: fresh snow, and ice glittering in
+/// the air.
 sealed class Weather
 {
-    public readonly float Clouds;    // cover of drifting clouds in the sky
-    public readonly float Overcast;  // a grey deck: dims and greys the palette, hides sun and stars
-    public readonly float Sea;       // a sea of clouds below the cabin's hill, ranges breaking through
+    public readonly float Overcast;  // greys and dims the palette, veils sun, moon and stars
+    public readonly float Sea;       // a sea of clouds below, ranges breaking through
+    public readonly float Broken;    // how much of the sea is open, showing the world below
     public readonly float Valley;    // fog lakes at the feet of the far hills
     public readonly float Wet;       // after rain: rainbow opposite a low sun, glints on the grass
-    public readonly float Snow;      // flake density; also whitens the ground under the pines
+    public readonly float Snow;      // fresh snow on open ground, and ice glittering in the air
     public readonly float Fog;       // haze that swallows far layers first
 
     public Weather(Sky sky)
     {
         switch (sky)
         {
-            case Sky.Cloudy: Clouds = 0.5f; Overcast = 0.1f; break;
+            case Sky.Cloudy: Sea = 1; Broken = 0.5f; break;
             case Sky.Overcast: Sea = 1; break;
-            case Sky.Rain: Clouds = 0.45f; Overcast = 0.08f; Wet = 1; Fog = 0.12f; break;
-            case Sky.Snow: Clouds = 1; Overcast = 0.6f; Snow = 1; Fog = 0.3f; break;
+            case Sky.Rain: Overcast = 0.05f; Wet = 1; Fog = 0.1f; break;
+            case Sky.Snow: Snow = 1; Fog = 0.1f; break;
             case Sky.Fog: Valley = 1; Fog = 0.08f; break;
         }
     }

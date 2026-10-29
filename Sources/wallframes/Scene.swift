@@ -146,7 +146,7 @@ struct Scene {
     private let snowLine: [Float] // [x] for the snowy layer
     private let snowSlope: [Float] // [x] its slope over ±3% of the height, so shading blends, not splits
     private let cabin: Cabin
-    private let flakes: [Float]   // snowflake coverage, full frame
+    private let flakes: [Float]   // glints of ice in the air, full frame
     private let glintPower: [Float] // drops on the wet meadow, full frame
     private let glintHue: [UInt8]   // and the color each catches, 0 = violet … 255 = red
     private let seed: UInt32
@@ -280,15 +280,16 @@ struct Scene {
         snowLine = snow
         snowSlope = slopes
 
-        // Snowflakes: soft dots, the big near ones rarer. Drawn only when it snows.
+        // Ice in the cold air after snow ("diamond dust"): tiny points that
+        // catch the light, the big near ones rarer. Drawn only after snow.
         let scale = h / 1664
         var flakeCover = [Float](repeating: 0, count: width * height)
         var flakeRng = SplitMix(state: UInt64(seed) &* 0xd1b54a32d192ed03 | 1)
-        for _ in 0..<(width * height / 2200) {
+        for _ in 0..<(width * height / 9000) {
             let fx = flakeRng.unit() * w, fy = flakeRng.unit() * h
             let near = powf(flakeRng.unit(), 3)
-            let bright = 0.55 + 0.45 * flakeRng.unit()
-            let sigma = (0.6 + 1.8 * near) * scale
+            let bright = 0.4 + 0.6 * powf(flakeRng.unit(), 2)
+            let sigma = (0.45 + 0.9 * near) * scale
             let reach = Int((3 * sigma).rounded(.up))
             let (cx, cy) = (Int(fx), Int(fy))
             for py in max(cy - reach, 0)...min(cy + reach, height - 1) {
@@ -504,20 +505,10 @@ struct Scene {
             }
         }
 
-        // Weather. Clouds: wide, flat shapes from 2-D noise, thinning into the
-        // distance, lit on the side toward the sun (pink-edged at sunset). They
-        // drift through the day. Under overcast they close into a soft deck.
-        let cloudLit = mixOklab(pal.horizon, pal.glow, 0.5) * 1.15
-        let cloudShade = desaturate(mixOklab(pal.mid, pal.zenith, 0.5), 0.5) * 0.85
-        let cloudEdge = 0.62 - 0.3 * w.clouds - 0.25 * w.overcast, cloudSoft = 0.12 + 0.3 * w.overcast
-        let (cloudStep, cloudSeed, drift) = (0.02 * H, hash32(seed ^ 0x51ed270b), Float(minute) * 0.002)
-        let h = H
-        func cloud(_ x: Float, _ y: Float) -> Float {
-            let n = fbm2(x / h * 1.6 + drift, y / h * 5.5, octaves: 5, seed: cloudSeed) * 0.5 + 0.5
-            return smoothstep(cloudEdge, cloudEdge + cloudSoft, n) * (1 - smoothstep(horizon * 0.75, horizon * 1.02, y))
-        }
+        // Weather. Clouds drift a little through the day.
+        let (h, drift) = (H, Float(minute) * 0.002)
         let fogColor = mixOklab(pal.horizon, desaturate(pal.mid, 0.6), 0.4)
-        let flakeColor = mixOklab(pal.mid, RGB(1, 1, 1), 0.6)
+        let iceColor = mix(RGB(1, 1, 1), pal.glow, 0.3) * (0.25 + 0.75 * smoothstep(-6, 10, alt))  // glitters in the sun
         let snowGround = mixOklab(pal.mid, pal.horizon, 0.5) * 1.15
 
         // Overcast: the view from above it, a sea of clouds over the world
@@ -526,7 +517,8 @@ struct Scene {
         // billows (|noise|, with creases between, as cumulus tops go) on a slow
         // swell, a few domes rising higher, all lit from the sun's side, or the
         // moon's at night. Far off, the lumps grow too small to see and it fades
-        // into haze. Seen from the cabin's hill it's a layer: its lumpy, soft
+        // into haze. Cloudy days break it open: through wide gaps the world
+        // below shows. Seen from the cabin's hill it's a layer: its lumpy, soft
         // base hangs at the height of the tall spruces' tops, which fade up into
         // it; under it, the hills beyond lie in its grey shade.
         let seaLit = mixOklab(pal.horizon, pal.glow, 0.5) * 1.3
@@ -539,12 +531,20 @@ struct Scene {
         let seaRows = w.sea > 0 ? height - seaRow0 : 0
         var seaTopY = [Float](repeating: H, count: w.sea > 0 ? width : 0)
         let seaSoft = 0.015 * H
+        /// How much cloud there is where the sea is `z` deep at pixel x: 1 on
+        /// overcast days, open gaps on cloudy ones.
+        func cloudiness(_ fx: Float, _ z: Float) -> Float {
+            guard w.broken > 0 else { return 1 }
+            let u = (fx - w2) * z / seaFocal + drift * 3
+            let open = -0.45 + 0.9 * w.broken  // the noise below this is a gap
+            return smoothstep(open - 0.06, open + 0.06, fbm2(u * 0.12, z * 0.12, octaves: 3, seed: seaSeed ^ 0x85ebca6b))
+        }
         let seaEdge: [Float] = w.sea > 0 ? (0..<width).map { x in  // its base, over the hill
             ground[(Self.layers.count - 1) * width + x] - 0.06 * h
                 + 0.012 * h * abs(fbm(Float(x) / h * 9 + drift * 3, octaves: 3, seed: seaSeed ^ 0x5bd1e995))
         } : []
         var seaLight = [Float](repeating: 0, count: width * seaRows)
-        var seaHaze = [Float](repeating: 0, count: width * seaRows)
+        var seaDepth = [Float](repeating: 0, count: width * seaRows)  // how far off, for haze and gaps
         var seaCover = [Float](repeating: 0, count: width * seaRows)
         if seaRows > 0 {
             // Light from the sun's side, or the moon's at night; softer by moonlight.
@@ -567,15 +567,16 @@ struct Scene {
                 }
                 return 0.15 + swell + dome + 0.35 * billow * (0.3 + 0.7 * (1 - smoothstep(8, 40, z)))
             }
+
             seaTopY.withUnsafeMutableBufferPointer { topBuf in
             seaLight.withUnsafeMutableBufferPointer { lightBuf in
-            seaHaze.withUnsafeMutableBufferPointer { hazeBuf in
+            seaDepth.withUnsafeMutableBufferPointer { depthBuf in
             seaCover.withUnsafeMutableBufferPointer { coverBuf in
-                let (tops, lights, hazes, covers) = (topBuf.baseAddress!, lightBuf.baseAddress!, hazeBuf.baseAddress!, coverBuf.baseAddress!)
+                let (tops, lights, depths, covers) = (topBuf.baseAddress!, lightBuf.baseAddress!, depthBuf.baseAddress!, coverBuf.baseAddress!)
                 DispatchQueue.concurrentPerform(iterations: width) { x in
                     let across = Float(x) + 0.5 - w2
                     var filled = height, crest = H  // rows from `filled` down are drawn; the surface's highest point so far
-                    var (lastY, lastLit, lastHaze): (Float, Float, Float) = (H * 2, 0.5, 0)  // the step before, nearer
+                    var (lastY, lastLit, lastZ): (Float, Float, Float) = (H * 2, 0.5, 1.5)  // the step before, nearer
                     var z: Float = 1.5
                     while z < 80 {
                         let u = across * z / seaFocal + drift * 3
@@ -587,24 +588,23 @@ struct Scene {
                         let nl = (dx * dx + 1 + dz * dz).squareRoot()
                         let lambert = max((-dx * toLight.x + toLight.y - dz * toLight.z) / nl, 0)
                         let lit = clamp01(0.5 + seaContrast * (0.65 * lambert - 0.3) + 0.15 * s)
-                        let haze = smoothstep(4, 45, z)
                         if row < filled {
                             // Rows between this step and the one before blend the two, so steps don't show.
                             for r in row..<filled {
                                 let t = lastY > y ? clamp01((Float(r) + 0.5 - y) / (lastY - y)) : 0
                                 let i = (r - seaRow0) * width + x
-                                (lights[i], hazes[i], covers[i]) = (lerp(lit, lastLit, t), lerp(haze, lastHaze, t), 1)
+                                (lights[i], depths[i], covers[i]) = (lerp(lit, lastLit, t), lerp(z, lastZ, t), 1)
                             }
                             filled = row
                             crest = y
                         }
-                        (lastY, lastLit, lastHaze) = (y, lit, haze)
+                        (lastY, lastLit, lastZ) = (y, lit, z)
                         z *= 1.008
                     }
                     // The top edge, antialiased: the row above the last drawn gets the fraction it's covered.
                     if filled > seaRow0 && filled < height {
                         let i = (filled - seaRow0) * width + x, above = i - width
-                        (lights[above], hazes[above], covers[above]) = (lights[i], hazes[i], clamp01(Float(filled) - crest))
+                        (lights[above], depths[above], covers[above]) = (lights[i], depths[i], clamp01(Float(filled) - crest))
                     }
                     tops[x] = crest
                 }
@@ -692,16 +692,6 @@ struct Scene {
                             c = mix(c, air + halo, disk * opaque) + moonColor * (albedo * (lit * moonGain + earthshine) * disk)
                         }
                     }
-                    if w.clouds > 0 && fy < horizonY * 1.02 {
-                        let d = cloud(fx, fy)
-                        if d > 0 {
-                            let (lx, ly) = (sunX - fx, sunY - fy)
-                            let len = max((lx * lx + ly * ly).squareRoot(), 1)
-                            let ahead = cloud(fx + lx / len * cloudStep, fy + ly / len * cloudStep)
-                            let light = clamp01(0.55 + 1.8 * (d - ahead))
-                            c = mix(c, mix(cloudShade, cloudLit, light) + pal.glow * (g * 0.6), d * 0.96)
-                        }
-                    }
                     if w.fog > 0 {
                         c = mix(c, fogColor, w.fog * 0.6 * smoothstep(0.3 * H, horizonY, fy))
                     }
@@ -761,7 +751,7 @@ struct Scene {
                                 tone = mix(tone, seaShade * 0.6, 0.3 * w.sea)  // the hills beyond, in the clouds' shade
                             } else if fy < gy {
                                 // Treetops fade up into the clouds' base.
-                                tone = mix(tone, seaHazeColor, 0.6 * w.sea * smoothstep(seaEdge[x] + 0.035 * H, seaEdge[x], fy))
+                                tone = mix(tone, seaHazeColor, 0.6 * w.sea * clamp01(1 - 2 * w.broken) * smoothstep(seaEdge[x] + 0.035 * H, seaEdge[x], fy))
                             }
                         }
                         c = cov == 1 ? tone : mix(c, tone, cov)
@@ -775,9 +765,10 @@ struct Scene {
                     if seaRows > 0 && y >= seaRow0 && fy < seaEdge[x] + seaSoft {
                         // The sea of clouds, down to its soft base, which wraps the treetops.
                         let i = (y - seaRow0) * width + x
-                        let cov = seaCover[i] * w.sea * smoothstep(seaEdge[x] + seaSoft, seaEdge[x] - 0.5 * seaSoft, fy)
+                        var cov = seaCover[i] * w.sea * smoothstep(seaEdge[x] + seaSoft, seaEdge[x] - 0.5 * seaSoft, fy)
+                        if cov > 0 { cov *= cloudiness(fx, seaDepth[i]) }
                         if cov > 0 {
-                            let tone = mixOklab(mix(seaShade, seaLit, seaLight[i]), seaHazeColor, seaHaze[i])
+                            let tone = mixOklab(mix(seaShade, seaLit, seaLight[i]), seaHazeColor, smoothstep(4, 45, seaDepth[i]))
                             c = mix(c, tone + pal.glow * (g * 0.7), cov)
                         }
                     }
@@ -797,7 +788,7 @@ struct Scene {
 
                     if w.snow > 0 {
                         let f = flakes[y * width + x]
-                        if f > 0.002 { c = mix(c, flakeColor, min(f * w.snow, 1)) }
+                        if f > 0.002 { c = c + iceColor * (0.6 * f * w.snow) }
                     }
 
                     let o = (y * width + x) * 4
