@@ -211,20 +211,20 @@ struct Star {
         return Star(direction: Vec3(lon: f[0], lat: f[1]), magnitude: Float(f[2]), bv: Float(f[3]))
     }
 
-    /// The Milky Way's grain: 20,000 points too faint to see one by one,
-    /// scattered about the galactic plane (most toward the center and
-    /// Cygnus), dimmed where `milkyWay` puts dust. `light` is 0…1.
+    /// The Milky Way's grain: 90,000 points too faint to see one by one,
+    /// most near the great star clouds, the rest along the band, as bright as
+    /// `milkyWay` is where they fall (so dust dims them). `light` is 0…1.5.
     static let grain: [(direction: Vec3, light: Float, bv: Float)] = {
         var rng = SplitMix(state: 0x6d2b79f5a1b2c3d4)
         let toJ2000 = galactic.transposed
-        return (0..<20000).map { _ in
-            let pick = rng.unit()
-            let l: Float = pick < 0.35 ? 30 * (2 * rng.unit() - 1)
-                : pick < 0.5 ? 75 + 20 * (2 * rng.unit() - 1) : 360 * rng.unit() - 180
+        return (0..<90000).map { _ in
+            let pick = rng.unit(), u = 2 * rng.unit() - 1
+            let l: Float = pick < 0.3 ? 14 * u : pick < 0.42 ? 30 + 12 * u : pick < 0.54 ? 77 + 14 * u
+                : pick < 0.62 ? -60 + 18 * u : 180 * u
             let (u1, u2) = (max(rng.unit(), 1e-6), rng.unit())
             let normal = (-2 * logf(u1)).squareRoot() * cosf(2 * .pi * u2)  // Box–Muller
-            let b = normal * (3.5 + 3.5 * (0.5 + 0.5 * cosf(l * .pi / 180)))
-            let light = (0.3 + 0.7 * powf(rng.unit(), 3)) * min(milkyWay(l, b).0, 1.2)
+            let b = normal * (2.5 + 4.5 * (0.5 + 0.5 * cosf(l * .pi / 180)))
+            let light = (0.25 + 0.75 * powf(rng.unit(), 4)) * min(powf(milkyWay(l, b).light, 1.3), 3) / 2
             return (toJ2000.apply(Vec3(lon: Double(l), lat: Double(b))), light, 1.4 * rng.unit())
         }
     }()

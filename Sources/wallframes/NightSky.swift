@@ -28,35 +28,83 @@ func starColor(_ bv: Float) -> RGB {
     return RGB(max(vivid.r, 0), max(vivid.g, 0), max(vivid.b, 0)) * (1 / y)
 }
 
-/// The Milky Way's glow at galactic longitude `l` (−180…180°) and latitude
-/// `b`: a band widest and brightest toward the center in Sagittarius, star
-/// clouds along it, and dust: the Great Rift from Cygnus down to
-/// Sagittarius, the Coalsack, fine lanes. Returns brightness, about 0…1.5,
-/// and the share of it that is the bulge's warmer light.
-func milkyWay(_ l: Float, _ b: Float) -> (Float, Float) {
-    guard abs(b) < 40 else { return (0, 0) }
+/// Value noise over the sky in galactic degrees, seamless across l = ±180°:
+/// features about `k` degrees across, `stretch` times longer along the plane.
+private func skyNoise(_ l: Float, _ b: Float, _ k: Float, _ octaves: Int, _ seed: UInt32, stretch: Float = 1) -> Float {
+    let kl = k * stretch
+    let a = fbm2(l / kl, b / k, octaves: octaves, seed: seed)
+    guard l > 150 else { return a }
+    return lerp(a, fbm2((l - 360) / kl, b / k, octaves: octaves, seed: seed), smoothstep(150, 180, l))
+}
+
+/// A soft patch of sky around galactic (cl, cb), widths in degrees.
+private func patch(_ l: Float, _ b: Float, _ cl: Float, _ cb: Float, _ wl: Float, _ wb: Float) -> Float {
+    var dl = l - cl
+    if dl > 180 { dl -= 360 } else if dl < -180 { dl += 360 }
+    return expf(-(dl / wl) * (dl / wl) - ((b - cb) / wb) * ((b - cb) / wb))
+}
+
+// The Milky Way's great star clouds, where they are: galactic l and b,
+// widths, brightness.
+private let starClouds: [(l: Float, b: Float, wl: Float, wb: Float, k: Float)] = [
+    (0, -3, 14, 7, 0.60),       // the bulge, around the center
+    (2, -4, 6, 3.5, 0.90),      // Large Sagittarius Star Cloud
+    (12, -1, 2.5, 1.6, 0.55),   // Small Sagittarius Star Cloud
+    (27, -2.5, 3.5, 2.5, 0.65), // Scutum Star Cloud
+    (48, -1, 7, 2.5, 0.40),     // Aquila
+    (77, 1.5, 9, 3.5, 0.55),    // Cygnus
+    (125, 0, 15, 3, 0.25),      // Cassiopeia
+    (-28, -1, 9, 3, 0.30),      // Norma
+    (-50, -0.5, 9, 3, 0.40),    // Centaurus
+    (-73, -1, 10, 3.5, 0.50),   // Carina
+]
+// Glowing gas bright enough to tint the band pink, where it is.
+private let nebulae: [(l: Float, b: Float, r: Float, k: Float)] = [
+    (6.0, -1.2, 0.6, 1.0),      // Lagoon
+    (7.0, -0.3, 0.4, 0.6),      // Trifid
+    (15.1, -0.7, 0.4, 0.6),     // Omega
+    (17.0, 0.8, 0.5, 0.5),      // Eagle
+    (85.6, -1.0, 1.4, 0.8),     // North America
+    (-72.4, -0.6, 1.0, 0.8),    // Carina
+    (-153.7, -2.1, 0.8, 0.5),   // Rosette
+    (-151.0, -19.4, 0.6, 0.5),  // Orion
+]
+
+/// The Milky Way at galactic longitude `l` (−180…180°) and latitude `b`.
+/// The sky is bent first, so the band meanders and every edge frays. Then
+/// a band, widest toward the center, and the great star clouds where they
+/// are, mottled at every scale; then dust in front of them. Returns the
+/// light (about 0…4), how warm it is (the bulge, and light reddened by
+/// dust), and the pink of glowing gas.
+func milkyWay(_ l0: Float, _ b0: Float) -> (light: Float, warm: Float, pink: Float) {
+    guard abs(b0) < 50 else { return (0, 0, 0) }
     func sq(_ x: Float) -> Float { x * x }
-    func noise(_ k: Float, _ seed: UInt32) -> Float {  // seamless across l = ±180°
-        let a = fbm2(l / k, b / k, octaves: 4, seed: seed)
-        guard l > 150 else { return a }
-        return lerp(a, fbm2((l - 360) / k, b / k, octaves: 4, seed: seed), smoothstep(150, 180, l))
-    }
+    let l = l0 + 3 * skyNoise(l0, b0, 24, 3, 0x9e3779b9)
+    let b = b0 + 2 * skyNoise(l0, b0, 8, 4, 0x7f4a7c15)
     let toward = 0.5 + 0.5 * cosf(l * .pi / 180)  // 1 toward the center, 0 away
-    let along = 0.22 + 0.55 * toward * toward
-        + 0.35 * expf(-sq((l - 75) / 16))   // Cygnus
-        + 0.30 * expf(-sq((l + 72) / 22))   // Carina and Crux
-        + 0.12 * expf(-sq((l - 135) / 30))  // Cassiopeia and Perseus
-    let clouds = 0.5 + 0.5 * noise(7, 0x2f6b9d1e)
-    let disk = along * expf(-sq(b / (4.5 + 4 * toward)) / 2) * (0.55 + 0.9 * clouds)
-    let bulge = 0.8 * expf(-sq(l / 13) - sq(b / 9)) * (0.7 + 0.6 * clouds)
-    let lanes = 0.5 + 0.5 * noise(2.5, 0x5a1c3e77)
-    let rift = smoothstep(95, 72, l) * smoothstep(-30, -8, l)
-        * expf(-sq((b - 1 - 3 * smoothstep(40, 0, l)) / (1.6 + 1.2 * lanes)))
-    let coalsack = expf(-(sq(l + 59.5) + sq(b + 0.5)) / 10)
-    let dust = clamp01(0.6 * rift * (0.6 + 0.6 * lanes) + 0.7 * coalsack
-                       + 0.3 * smoothstep(0.62, 0.85, lanes) * expf(-sq(b / 5)))
-    let total = disk + bulge
-    return (total * (1 - dust), bulge / max(total, 1e-6))
+    let width = 3 + 3.5 * toward + 1.2 * skyNoise(l0, 0, 30, 2, 0x165667b1)
+    var light = (0.16 + 0.36 * toward * toward) * expf(-sq(b / width) / 2)  // the band
+        + (0.08 + 0.14 * toward) * expf(-sq(b / (3 * width)) / 2)           // its faint outer glow
+    for c in starClouds { light += c.k * patch(l, b, c.l, c.b, c.wl, c.wb) }
+    light *= 0.6 + 0.8 * smoothstep(-0.5, 0.6, skyNoise(l, b, 2.5, 5, 0x2f6b9d1e))
+    // Dust: the Great Rift from Cygnus down to Sagittarius, the dark clouds
+    // of Ophiuchus north of the center, the Coalsack, and wisps and lanes
+    // drawn out along the plane.
+    let clouds = skyNoise(l, b, 2.2, 5, 0x5a1c3e77)
+    let lane = powf(1 - abs(skyNoise(l, b, 3, 4, 0x27d4eb2f, stretch: 3)), 10)
+    let wisps = skyNoise(l, b, 2, 5, 0x3c6ef372, stretch: 3)
+    let path = 1 + 2.5 * smoothstep(40, -5, l) + 1.5 * skyNoise(l0, 0, 14, 2, 0x85ebca6b)
+    let rift = smoothstep(95, 70, l) * smoothstep(-25, -5, l) * expf(-sq((b - path) / 2.4))
+    let ophiuchus = smoothstep(-25, -10, l) * smoothstep(18, 4, l) * smoothstep(2, 6, b) * smoothstep(24, 10, b)
+    let dust = rift * (0.5 + 0.7 * smoothstep(-0.15, 0.15, clouds))
+        + 0.9 * ophiuchus * smoothstep(0.15, 0.35, clouds)
+        + 0.85 * patch(l, b, -59.5, -0.5, 3, 2.5)  // the Coalsack
+        + expf(-sq(b / 6)) * (0.35 * lane + 0.6 * smoothstep(0.15, 0.4, wisps))
+    let through = expf(-2.2 * dust)
+    var pink: Float = 0
+    for n in nebulae { pink += n.k * patch(l0, b0, n.l, n.b, n.r, n.r) }
+    let warm = clamp01(0.6 * patch(l, b, 0, -3, 14, 8) + 0.2 * (1 - through))
+    return (light * through, warm, pink * through)
 }
 
 /// The zodiacal light: sunlight on dust in the planets' plane, a soft cone

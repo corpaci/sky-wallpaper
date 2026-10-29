@@ -31,4 +31,15 @@ day=(--lat 52.5 --lon 13.4 --date 2026-10-28 --utc-offset 60 --forecast tests/fo
 .build/release/wallframes --size "$size" "${day[@]}" --out "$tmp/swift-day" >/dev/null
 mono "$tmp/sky.exe" render --size "$size" "${day[@]}" --out "$tmp/cs-day" >/dev/null
 swift windows/compare.swift "$tmp/swift-day" "$tmp/cs-day/$size" || failed=1
+
+# Moonless nights, north and south: the Milky Way, and the view turned
+# around to face north.
+for place in "vienna 48.2 16.4 120" "sydney -33.9 151.2 600"; do
+    read -r name lat lon offset <<<"$place"
+    echo "== milky way, $name"
+    night=(--size "$size" --lat "$lat" --lon "$lon" --date 2026-07-14 --utc-offset "$offset")
+    .build/release/wallframes "${night[@]}" --out "$tmp/swift-$name" >/dev/null
+    mono "$tmp/sky.exe" render "${night[@]}" --out "$tmp/cs-$name" >/dev/null
+    swift windows/compare.swift "$tmp/swift-$name" "$tmp/cs-$name/$size" || failed=1
+done
 exit $failed

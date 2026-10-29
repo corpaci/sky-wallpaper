@@ -373,7 +373,9 @@ struct Scene {
         // The moon, where it is, lit from where the sun is: pale by day; by
         // night it hides the stars behind it, and earthshine lights its dark
         // side, most in a thin crescent, when the Earth is nearly full in its sky.
-        let moonR = 0.013 * H
+        // Low over the horizon it looks bigger, as the real one seems to: up
+        // to 67% wider, back to its usual size by 30°.
+        let moonR = 0.013 * H * (1 + 0.67 * (1 - smoothstep(2, 30, moon.alt)))
         let moonVis = (1 - 0.95 * w.overcast) * (1 - 0.5 * w.fog) * smoothstep(-1.5, -0.5, moon.alt)
         let opaque = smoothstep(6, -6, alt)
         let moonGain = 0.3 + 0.7 * opaque
@@ -399,7 +401,7 @@ struct Scene {
         let contrast = 0.25 + 0.75 * smoothstep(-2, -8, alt)
         let skyRows = min(height, Int(horizonY) + 2)
         var starPower = [Float](repeating: 0, count: width * skyRows)
-        var starTint = [UInt8](repeating: 0, count: width * skyRows)
+        var starBV = [Float](repeating: 0, count: width * skyRows)  // B−V weighted by light, for each pixel's color
         let scale = H / 1664
         /// A point of light as a small Gaussian, its total the same wherever
         /// it falls between pixels: `peak` is its height at `sigma`.
@@ -417,13 +419,12 @@ struct Scene {
             }
             guard sum > 0 else { return }
             let norm = peak * 2 * .pi * sigma * sigma / sum
-            let tint = UInt8(clamp01((bv + 0.4) / 2.4) * 255)
             for py in y0...y1 {
                 for px in x0...x1 {
                     let dx = Float(px) + 0.5 - x, dy = Float(py) + 0.5 - y
                     let k = expf(-(dx * dx + dy * dy) / (2 * sigma * sigma))
                     starPower[py * width + px] += norm * k
-                    if k > 0.3 { starTint[py * width + px] = tint }
+                    starBV[py * width + px] += norm * k * bv
                 }
             }
         }
@@ -443,7 +444,7 @@ struct Scene {
         // The Milky Way and the zodiacal light, on a grid of sky directions
         // every 4 px (both are smooth at that scale), bilinear in between.
         let mwSeen = smoothstep(-11, -18, alt) * (1 - 0.85 * moonLight) * clear
-        let mwGain = 0.02 * mwSeen
+        let mwGain = 0.022 * mwSeen
         let zlGain = 0.006 * smoothstep(-13, -19, alt) * (1 - 0.9 * moonLight) * clear
         // Its grain: stars too faint to see one by one, crowding the band.
         if mwSeen > 0 {
@@ -452,14 +453,15 @@ struct Scene {
                 guard v.z > 0 else { continue }
                 let s = screen(v)
                 guard s.x > -2, s.x < W + 2, s.y > -2 else { continue }
-                splat(s.x, s.y, 0.08 * g.light * mwSeen * powf(10, -0.1 * (airmass(s.alt) - 1)), max(0.5 * scale, 0.6), g.bv)
+                splat(s.x, s.y, 0.12 * g.light * mwSeen * powf(10, -0.1 * (airmass(s.alt) - 1)), max(0.5 * scale, 0.6), g.bv)
             }
         }
         let gs = 4, gw = width / gs + 2, gh = skyRows / gs + 2
         var glowGrid = [Float](repeating: 0, count: mwGain + zlGain > 0 ? gw * gh * 3 : 0)
         if !glowGrid.isEmpty {
             let (toGalactic, toEcliptic, sunLon) = (sky.toGalactic, sky.toEcliptic, Float(sky.sunLongitude))
-            let mwCool = RGB(hex: 0xc4d0ff), mwWarm = RGB(hex: 0xffe3c4), zlColor = RGB(hex: 0xfff0dc)
+            let mwCool = RGB(hex: 0xd4ddff), mwWarm = RGB(hex: 0xffe6c8), mwPink = RGB(hex: 0xff6f96)
+            let zlColor = RGB(hex: 0xfff0dc)
             glowGrid.withUnsafeMutableBufferPointer { buf in
                 let g = buf.baseAddress!
                 DispatchQueue.concurrentPerform(iterations: gh) { j in
@@ -472,8 +474,8 @@ struct Scene {
                         var c = RGB(0, 0, 0)
                         if mwGain > 0 {
                             let gal = toGalactic.apply(v)
-                            let (mw, warm) = milkyWay(Float(gal.lon), Float(gal.lat))
-                            c = mix(mwCool, mwWarm, warm) * (mw * mwGain * fade)
+                            let mw = milkyWay(Float(gal.lon), Float(gal.lat))
+                            c = mix(mwCool, mwWarm, mw.warm) * (mw.light * mwGain * fade) + mwPink * (mw.pink * 0.3 * mwGain * fade)
                         }
                         if zlGain > 0 {
                             let e = toEcliptic.apply(v)
@@ -521,7 +523,10 @@ struct Scene {
 
         // After rain. The rainbow stands opposite the sun: from this view,
         // which faces the sun's path, it rises at the far edge, and sinks as
-        // the sun climbs, gone above 42°. Glints wherever the sun is up.
+        // the sun climbs, gone above 42°. It hangs in the rain over the far
+        // range: in front of the summit, behind the nearer ridges. Glints
+        // wherever the sun is up.
+        let bowLayer = 1
         let bowGain = 0.38 * w.wet * smoothstep(-0.5, 3, alt) * (1 - smoothstep(30, 41, alt))
         let bowR = 0.78 * H
         let bowX = sunX > 0.5 * W ? -0.22 * W : 1.22 * W
@@ -572,7 +577,7 @@ struct Scene {
                             c = c + RGB(at(0), at(1), at(2))
                         }
                         let s = starPower[y * width + x]
-                        if s > 0 { c = c + starColors[Int(starTint[y * width + x])] * s }
+                        if s > 0 { c = c + starColors[Int(clamp01((starBV[y * width + x] / s + 0.4) / 2.4) * 255)] * s }
                     }
                     if sunVis > 0 {
                         let cov = clamp01(sunR - d + 0.5) * sunVis
@@ -611,6 +616,18 @@ struct Scene {
 
                     var frontTree: Float = 0  // how much of this pixel is tree or porch, in front
                     for l in 0..<layerCount {
+                        if l == bowLayer && bowGain > 0 {
+                            // Rainbow light, added: violet inside, red outside; the
+                            // second bow beyond, colors reversed; brighter sky inside
+                            // the first, Alexander's dark band between.
+                            let d = ((fx - bowX) * (fx - bowX) + (fy - bowY) * (fy - bowY)).squareRoot()
+                            let bw = 0.05 * bowR, r2 = 1.21 * bowR, bw2 = 0.07 * bowR
+                            let u = (d - (bowR - bw)) / (2 * bw), u2 = (d - (r2 - bw2)) / (2 * bw2)
+                            if u > 0 && u < 1 { c = c + hues[min(Int(u * 255), 255)] * (bowGain * powf(sinf(.pi * u), 0.8)) }
+                            if u2 > 0 && u2 < 1 { c = c + hues[min(Int((1 - u2) * 255), 255)] * (0.38 * bowGain * powf(sinf(.pi * u2), 0.8)) }
+                            if d < bowR - bw { c = c * (1 + 0.18 * bowGain) }
+                            else if d > bowR + bw && d < r2 - bw2 { c = c * (1 - 0.2 * bowGain) }
+                        }
                         if l == layerCount - 1 && w.sea > 0 {
                             // The sea of clouds, over everything but the cabin's hill.
                             let above = seaTop[x] - fy
@@ -670,19 +687,6 @@ struct Scene {
                         frontTree = frontTree * (1 - cov) + tree
                     }
 
-                    if bowGain > 0 {
-                        // Rainbow light, added: violet inside, red outside; the second
-                        // bow beyond, colors reversed; brighter sky inside the first,
-                        // Alexander's dark band between. It fades into the near hills.
-                        let d = ((fx - bowX) * (fx - bowX) + (fy - bowY) * (fy - bowY)).squareRoot()
-                        let fade = 1 - smoothstep(horizonY + 0.05 * H, horizonY + 0.32 * H, fy)
-                        let bw = 0.05 * bowR, r2 = 1.21 * bowR, bw2 = 0.07 * bowR
-                        let u = (d - (bowR - bw)) / (2 * bw), u2 = (d - (r2 - bw2)) / (2 * bw2)
-                        if u > 0 && u < 1 { c = c + hues[min(Int(u * 255), 255)] * (bowGain * powf(sinf(.pi * u), 0.8) * fade) }
-                        if u2 > 0 && u2 < 1 { c = c + hues[min(Int((1 - u2) * 255), 255)] * (0.38 * bowGain * powf(sinf(.pi * u2), 0.8) * fade) }
-                        if d < bowR - bw { c = c * (1 + 0.18 * bowGain * fade) }
-                        else if d > bowR + bw && d < r2 - bw2 { c = c * (1 - 0.2 * bowGain * fade) }
-                    }
                     if glintGain > 0 {
                         // On open ground only: not on the trees or the porch.
                         let p = glintPower[y * width + x] * (1 - min(frontTree, 1))

@@ -545,7 +545,9 @@ sealed class Scene
         // The moon, where it is, lit from where the sun is: pale by day; by
         // night it hides the stars behind it, and earthshine lights its dark
         // side, most in a thin crescent, when the Earth is nearly full in its sky.
-        float moonR = 0.013f * H;
+        // Low over the horizon it looks bigger, as the real one seems to: up
+        // to 67% wider, back to its usual size by 30°.
+        float moonR = 0.013f * H * (1 + 0.67f * (1 - Col.Smoothstep(2, 30, moon.Alt)));
         float moonVis = (1 - 0.95f * w.Overcast) * (1 - 0.5f * w.Fog) * Col.Smoothstep(-1.5f, -0.5f, moon.Alt);
         float opaque = Col.Smoothstep(6, -6, alt);
         float moonGain = 0.3f + 0.7f * opaque;
@@ -574,7 +576,7 @@ sealed class Scene
         float contrast = 0.25f + 0.75f * Col.Smoothstep(-2, -8, alt);
         int skyRows = Math.Min(Height, (int)horizonY + 2), width = Width;
         var starPower = new float[width * skyRows];
-        var starTint = new byte[width * skyRows];
+        var starBV = new float[width * skyRows];  // B−V weighted by light, for each pixel's color
         float scale = H / 1664;
         // A point of light as a small Gaussian, its total the same wherever it
         // falls between pixels: `peak` is its height at `sigma`.
@@ -594,14 +596,13 @@ sealed class Scene
                 }
             if (sum <= 0) return;
             float norm = peak * 2 * (float)Math.PI * sigma * sigma / sum;
-            byte tint = (byte)(Col.Clamp01((bv + 0.4f) / 2.4f) * 255);
             for (int py = y0; py <= y1; py++)
                 for (int qx = x0; qx <= x1; qx++)
                 {
                     float sdx = qx + 0.5f - x, sdy = py + 0.5f - y;
                     float k = Col.Exp(-(sdx * sdx + sdy * sdy) / (2 * sigma * sigma));
                     starPower[py * width + qx] += norm * k;
-                    if (k > 0.3f) starTint[py * width + qx] = tint;
+                    starBV[py * width + qx] += norm * k * bv;
                 }
         };
         Action<Vec3, float, float> point = (v, magnitude, bv) =>
@@ -622,7 +623,7 @@ sealed class Scene
         // The Milky Way and the zodiacal light, on a grid of sky directions
         // every 4 px (both are smooth at that scale), bilinear in between.
         float mwSeen = Col.Smoothstep(-11, -18, alt) * (1 - 0.85f * moonLight) * clear;
-        float mwGain = 0.02f * mwSeen;
+        float mwGain = 0.022f * mwSeen;
         float zlGain = 0.006f * Col.Smoothstep(-13, -19, alt) * (1 - 0.9f * moonLight) * clear;
         // Its grain: stars too faint to see one by one, crowding the band.
         if (mwSeen > 0)
@@ -633,7 +634,7 @@ sealed class Scene
                 if (v.Z <= 0) continue;
                 ScreenPoint sp = screen(v);
                 if (!(sp.X > -2) || !(sp.X < W + 2) || !(sp.Y > -2)) continue;
-                splat(sp.X, sp.Y, 0.08f * g.Light * mwSeen * Col.Pow(10, -0.1f * (NightSky.Airmass(sp.Alt) - 1)), Math.Max(0.5f * scale, 0.6f), g.Bv);
+                splat(sp.X, sp.Y, 0.12f * g.Light * mwSeen * Col.Pow(10, -0.1f * (NightSky.Airmass(sp.Alt) - 1)), Math.Max(0.5f * scale, 0.6f), g.Bv);
             }
         }
         const int gs = 4;
@@ -643,7 +644,8 @@ sealed class Scene
         {
             Mat3 toGalactic = sky.ToGalactic, toEcliptic = sky.ToEcliptic;
             float sunLon = (float)sky.SunLongitude;
-            RGB mwCool = RGB.Hex(0xc4d0ff), mwWarm = RGB.Hex(0xffe3c4), zlColor = RGB.Hex(0xfff0dc);
+            RGB mwCool = RGB.Hex(0xd4ddff), mwWarm = RGB.Hex(0xffe6c8), mwPink = RGB.Hex(0xff6f96);
+            RGB zlColor = RGB.Hex(0xfff0dc);
             Parallel.For(0, gh, j =>
             {
                 for (int i = 0; i < gw; i++)
@@ -658,7 +660,7 @@ sealed class Scene
                     {
                         Vec3 gal = toGalactic.Apply(v);
                         float[] mw = NightSky.MilkyWay((float)gal.Lon, (float)gal.Lat);
-                        c = Col.Mix(mwCool, mwWarm, mw[1]) * (mw[0] * mwGain * fade);
+                        c = Col.Mix(mwCool, mwWarm, mw[1]) * (mw[0] * mwGain * fade) + mwPink * (mw[2] * 0.3f * mwGain * fade);
                     }
                     if (zlGain > 0)
                     {
@@ -708,7 +710,10 @@ sealed class Scene
 
         // After rain. The rainbow stands opposite the sun: from this view,
         // which faces the sun's path, it rises at the far edge, and sinks as
-        // the sun climbs, gone above 42°. Glints wherever the sun is up.
+        // the sun climbs, gone above 42°. It hangs in the rain over the far
+        // range: in front of the summit, behind the nearer ridges. Glints
+        // wherever the sun is up.
+        const int bowLayer = 1;
         float bowGain = 0.38f * w.Wet * Col.Smoothstep(-0.5f, 3, alt) * (1 - Col.Smoothstep(30, 41, alt));
         float bowR = 0.78f * H;
         float bowX = sunX > 0.5f * W ? -0.22f * W : 1.22f * W;
@@ -767,7 +772,7 @@ sealed class Scene
                             Col.Lerp(Col.Lerp(glowGrid[go + 2], glowGrid[go + 5], fu), Col.Lerp(glowGrid[go2 + 2], glowGrid[go2 + 5], fu), fv));
                     }
                     float sp = starPower[y * width + x];
-                    if (sp > 0) c = c + starColors[starTint[y * width + x]] * sp;
+                    if (sp > 0) c = c + starColors[(int)(Col.Clamp01((starBV[y * width + x] / sp + 0.4f) / 2.4f) * 255)] * sp;
                 }
                 if (sunVis > 0)
                 {
@@ -813,6 +818,19 @@ sealed class Scene
                 float frontTree = 0;  // how much of this pixel is tree or porch, in front
                 for (int l = 0; l < Layers.Length; l++)
                 {
+                    if (l == bowLayer && bowGain > 0)
+                    {
+                        // Rainbow light, added: violet inside, red outside; the
+                        // second bow beyond, colors reversed; brighter sky inside
+                        // the first, Alexander's dark band between.
+                        float bd = Col.Sqrt((fx - bowX) * (fx - bowX) + (fy - bowY) * (fy - bowY));
+                        float bw = 0.05f * bowR, r2 = 1.21f * bowR, bw2 = 0.07f * bowR;
+                        float u = (bd - (bowR - bw)) / (2 * bw), u2 = (bd - (r2 - bw2)) / (2 * bw2);
+                        if (u > 0 && u < 1) c = c + hues[Math.Min((int)(u * 255), 255)] * (bowGain * Col.Pow((float)Math.Sin((float)Math.PI * u), 0.8f));
+                        if (u2 > 0 && u2 < 1) c = c + hues[Math.Min((int)((1 - u2) * 255), 255)] * (0.38f * bowGain * Col.Pow((float)Math.Sin((float)Math.PI * u2), 0.8f));
+                        if (bd < bowR - bw) c = c * (1 + 0.18f * bowGain);
+                        else if (bd > bowR + bw && bd < r2 - bw2) c = c * (1 - 0.2f * bowGain);
+                    }
                     if (l == Layers.Length - 1 && w.Sea > 0)
                     {
                         // The sea of clouds, over everything but the cabin's hill.
@@ -877,20 +895,6 @@ sealed class Scene
                     frontTree = frontTree * (1 - cov) + tree;
                 }
 
-                if (bowGain > 0)
-                {
-                    // Rainbow light, added: violet inside, red outside; the second
-                    // bow beyond, colors reversed; brighter sky inside the first,
-                    // Alexander's dark band between. It fades into the near hills.
-                    float bd = Col.Sqrt((fx - bowX) * (fx - bowX) + (fy - bowY) * (fy - bowY));
-                    float fade = 1 - Col.Smoothstep(horizonY + 0.05f * H, horizonY + 0.32f * H, fy);
-                    float bw = 0.05f * bowR, r2 = 1.21f * bowR, bw2 = 0.07f * bowR;
-                    float u = (bd - (bowR - bw)) / (2 * bw), u2 = (bd - (r2 - bw2)) / (2 * bw2);
-                    if (u > 0 && u < 1) c = c + hues[Math.Min((int)(u * 255), 255)] * (bowGain * Col.Pow((float)Math.Sin((float)Math.PI * u), 0.8f) * fade);
-                    if (u2 > 0 && u2 < 1) c = c + hues[Math.Min((int)((1 - u2) * 255), 255)] * (0.38f * bowGain * Col.Pow((float)Math.Sin((float)Math.PI * u2), 0.8f) * fade);
-                    if (bd < bowR - bw) c = c * (1 + 0.18f * bowGain * fade);
-                    else if (bd > bowR + bw && bd < r2 - bw2) c = c * (1 - 0.2f * bowGain * fade);
-                }
                 if (glintGain > 0)
                 {
                     // On open ground only: not on the trees or the porch.

@@ -57,7 +57,9 @@ isn't mirrored:
 - **Rain** is the moment after:
   - a primary and secondary bow (reversed colors, Alexander's dark band, a
     brighter sky inside) centred opposite the sun's side of the view, sinking
-    as the sun climbs and gone above about 42°;
+    as the sun climbs and gone above about 42°. It's drawn between the summit
+    and the rocky range, so it hangs in the rain over the far range and the
+    nearer ridges hide its feet;
   - glints on open ground (never on trees or the porch), each one color of
     the spectrum.
 
@@ -74,7 +76,8 @@ for the frame's moment and place:
   At 3420 px wide that's 19 px per degree.
 - **The moon** is a sphere lit from the real sun's direction, flat to its
   rim as the real moon is (Lommel–Seeliger), drawn about five times its real
-  size. Its maria are hand-placed patches; their north follows the ecliptic
+  size, and up to 67% wider again near the horizon, back to normal by 30°
+  (the moon illusion). Its maria are hand-placed patches; their north follows the ecliptic
   pole, within 1.5° of the moon's axis. Earthshine on the dark side is
   strongest in a thin crescent. Its light adds blue to the night palette, dims
   the faint stars and washes out the Milky Way. By day it's drawn pale.
@@ -84,11 +87,20 @@ for the frame's moment and place:
   colors. Which ones show depends on the sun's depth (about magnitude −3.5
   at the horizon down to 6 at −16°), on the moon, and on 0.25 magnitudes of
   extinction per airmass. By day only Venus can show, faintly.
-- **The Milky Way** is a model in galactic coordinates rather than a survey
-  map: a band, widest and brightest toward Sagittarius, with bumps at Cygnus,
-  Carina and Cassiopeia, noise for star clouds, dust (the Great Rift, the
-  Coalsack, lanes) and 20,000 faint grain points crowding the band. It's
-  computed every 4 px and interpolated.
+- **The Milky Way** is a model in galactic coordinates, not a survey map.
+  The coordinates are bent by noise first, so the band meanders and its
+  edges fray. On that bent sky:
+  - a band, widest toward the center, with a faint wide glow around it;
+  - the great star clouds where they are (Sagittarius, Scutum, Aquila,
+    Cygnus, Cassiopeia, Norma, Centaurus, Carina), mottled at every scale;
+  - dust in front: the Great Rift from Cygnus to Sagittarius, the dark clouds
+    of Ophiuchus, the Coalsack, and wisps and lanes drawn out along the
+    plane;
+  - the pink of eight bright nebulae, Lagoon to Orion, at their places;
+  - 90,000 faint grain points, mostly in the star clouds and as bright as the
+    band where they fall, so it reads as starlight.
+
+  The glow is computed every 4 px and interpolated.
 - **The zodiacal light** is a soft cone along the ecliptic from the real
   sun's position below the horizon, after full dark.
 
@@ -159,8 +171,9 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
 - **C# port.** It compiles with `-langversion:5`, the level of Windows'
   built-in compiler, in console and windowless builds, with no warnings.
   `windows/parity.sh` compares it with the Swift renderer for every sky and for
-  a real forecast day (`tests/forecast-berlin-2026-10-28.json`). At worst,
-  0.013% of color values differ, by at most two steps out of 255. Schedules
+  a real forecast day (`tests/forecast-berlin-2026-10-28.json`), and for
+  moonless July nights in Vienna and Sydney (the Milky Way, and the view
+  facing north). At worst, 0.013% of color values differ, by at most two steps out of 255. Schedules
   are identical.
 - **What the night sky costs (2026-10-29).** One day at 3420×2224 for
   Vienna, before and after it:
@@ -168,8 +181,8 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
   | | Frames | Render CPU | HEIC |
   |---|---|---|---|
   | Before, any day | 14 | 15 s | 16.6 MB |
-  | 14 July | 17 | 19 s | 20.1 MB |
-  | 29 October | 19 | 22 s | 23.2 MB |
+  | 14 July | 17 | 20 s | 20.4 MB |
+  | 29 October | 19 | 23 s | 23.2 MB |
 
   The extra frames are the night's. A night frame takes about 1.3 MB,
   mostly the dither.

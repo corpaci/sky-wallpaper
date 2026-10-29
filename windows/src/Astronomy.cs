@@ -260,9 +260,9 @@ sealed class Star
         return stars.ToArray();
     }
 
-    /// The Milky Way's grain: 20,000 points too faint to see one by one,
-    /// scattered about the galactic plane (most toward the center and
-    /// Cygnus), dimmed where `MilkyWay` puts dust. `Light` is 0…1.
+    /// The Milky Way's grain: 90,000 points too faint to see one by one,
+    /// most near the great star clouds, the rest along the band, as bright as
+    /// `MilkyWay` is where they fall (so dust dims them). `Light` is 0…1.5.
     public sealed class Grain
     {
         public Vec3 Direction;
@@ -275,17 +275,17 @@ sealed class Star
     {
         var rng = new SplitMix(0x6d2b79f5a1b2c3d4);
         Mat3 toJ2000 = Astro.Galactic.Transposed;
-        var grain = new Grain[20000];
+        var grain = new Grain[90000];
         float pi = (float)Math.PI;
         for (int n = 0; n < grain.Length; n++)
         {
-            float pick = rng.Unit();
-            float l = pick < 0.35f ? 30 * (2 * rng.Unit() - 1)
-                : pick < 0.5f ? 75 + 20 * (2 * rng.Unit() - 1) : 360 * rng.Unit() - 180;
+            float pick = rng.Unit(), u = 2 * rng.Unit() - 1;
+            float l = pick < 0.3f ? 14 * u : pick < 0.42f ? 30 + 12 * u : pick < 0.54f ? 77 + 14 * u
+                : pick < 0.62f ? -60 + 18 * u : 180 * u;
             float u1 = Math.Max(rng.Unit(), 1e-6f), u2 = rng.Unit();
             float normal = Col.Sqrt(-2 * (float)Math.Log(u1)) * (float)Math.Cos(2 * pi * u2);  // Box–Muller
-            float b = normal * (3.5f + 3.5f * (0.5f + 0.5f * (float)Math.Cos(l * pi / 180)));
-            float light = (0.3f + 0.7f * Col.Pow(rng.Unit(), 3)) * Math.Min(NightSky.MilkyWay(l, b)[0], 1.2f);
+            float b = normal * (2.5f + 4.5f * (0.5f + 0.5f * (float)Math.Cos(l * pi / 180)));
+            float light = (0.25f + 0.75f * Col.Pow(rng.Unit(), 4)) * Math.Min(Col.Pow(NightSky.MilkyWay(l, b)[0], 1.3f), 3) / 2;
             grain[n] = new Grain { Direction = toJ2000.Apply(Vec3.FromLonLat(l, b)), Light = light, Bv = 1.4f * rng.Unit() };
         }
         return grain;

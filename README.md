@@ -8,7 +8,7 @@ Optionally, it follows your real sunrise, sunset and hourly weather.
 
 ![The frames of one clear day, from midnight to night](docs/preview.jpg)
 ![Overcast as a sea of clouds, after rain, fog lakes, cloudy, snow](docs/weather.jpg)
-![Night skies over Vienna: a waning gibbous moon, a crescent at dusk, the July Milky Way, a full moon](docs/night.jpg)
+![A crescent at dusk and a waning gibbous moon over Vienna; the July Milky Way over Vienna and over Sydney](docs/night.jpg)
 
 **Why it's cheap:** the desktop shows a still image and swaps it at set
 times (17 to 19 a day, plus one per change in the weather); nothing
@@ -120,12 +120,15 @@ hour each frame shows:
 - **Mercury to Saturn**, at their real brightness.
 - **2,847 stars**, every one brighter than magnitude 5.5 (the Yale Bright
   Star Catalogue), in their colors, dimmed near the horizon.
-- **The Milky Way and the zodiacal light**, where they really lie, on dark
-  moonless nights. Their shapes are a model, not a photograph.
+- **The Milky Way**, on dark moonless nights: its great star clouds, dark
+  dust lanes and pink glowing gas where they really are, grown out of noise
+  around them, so the shapes are a model, not a photograph. Also the
+  zodiacal light, the faint cone of sunlit dust along the planets' path.
 
 The view faces the equator: north of it, the left edge is due east and the
 right edge due west. The moon is drawn about five times its real size, the
-way it looks to us. Without a location, the sky is drawn for 45° north at
+way it looks to us, and up to two-thirds bigger still near the horizon,
+where it seems bigger to us too. Without a location, the sky is drawn for 45° north at
 your time zone's longitude.
 
 ## Weather and privacy
@@ -136,8 +139,8 @@ Grey weather isn't mirrored back at you; the sky shows what's beyond it:
   overhead.
 - **Fog:** fog lakes lie low in the far valleys under a clear sky.
 - **Rain:** the moment after. A rainbow stands opposite the sun while it's
-  low (from this view, at the far edge, with its faint second bow), and the
-  wet grass glints in every color.
+  low (from this view, at the far edge, with its faint second bow), in the
+  rain over the far range, and the wet grass glints in every color.
 - **Snow and cloudy days** are shown as they are.
 
 Weather comes from [Open-Meteo](https://open-meteo.com): free, no account,
