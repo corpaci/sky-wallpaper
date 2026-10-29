@@ -3,6 +3,7 @@
 // windows/parity.sh renders the same frames with both and compares pixels.
 
 using System;
+using System.Linq;
 
 /// Linear-light RGB. Light adds here; palettes blend in OKLab; sRGB encoding
 /// happens once, at quantization.
@@ -58,6 +59,18 @@ static class Col
     {
         float[] a = ToOklab(x), b = ToOklab(y);
         return FromOklab(Lerp(a[0], b[0], t), Lerp(a[1], b[1], t), Lerp(a[2], b[2], t));
+    }
+
+    static readonly RGB[] spectrumStops = new uint[] { 0x8b5cf6, 0x3b82f6, 0x22d3ee, 0x34d399, 0xfde047, 0xfb923c, 0xef4444 }
+        .Select(RGB.Hex).ToArray();
+
+    /// The visible spectrum from violet (0) to red (1), blended in OKLab: the
+    /// colors of a rainbow's band, or of light split by a drop.
+    public static RGB Spectrum(float t)
+    {
+        float x = Clamp01(t) * (spectrumStops.Length - 1);
+        int i = Math.Min((int)x, spectrumStops.Length - 2);
+        return MixOklab(spectrumStops[i], spectrumStops[i + 1], x - i);
     }
 
     /// Toward grey at the same lightness: OKLab chroma scaled down by `t`.

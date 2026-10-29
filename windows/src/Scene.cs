@@ -195,6 +195,8 @@ sealed class Scene
     readonly float windowX0, windowX1, windowY0, windowY1;  // the cabin's window
     readonly float[] stars;      // linear RGB, full frame
     readonly float[] flakes;     // snowflake coverage, full frame
+    readonly float[] glintPower; // drops on the wet meadow, full frame
+    readonly byte[] glintHue;    // and the color each catches, 0 = violet … 255 = red
     readonly uint seed;
 
     public Scene(int width, int height, uint seed)
@@ -368,6 +370,39 @@ sealed class Scene
                 }
             }
         }
+
+        // Glints: drops on the wet meadow, each splitting the low sun into
+        // one color. Drawn only after rain.
+        glintPower = new float[width * height];
+        glintHue = new byte[width * height];
+        var glintRng = new SplitMix(unchecked(((ulong)seed * 0x94d049bb133111eb) | 1));
+        int glintCount = width * height / 1200;
+        for (int n = 0; n < glintCount; n++)
+        {
+            float gx = glintRng.Unit() * W, gy = (0.68f + 0.32f * glintRng.Unit()) * H;
+            float tint = glintRng.Unit(), mag = Col.Pow(glintRng.Unit(), 3);
+            int cx = (int)gx, cy = (int)gy;
+            if (cy >= height || gy <= ground[2 * width + Math.Min(cx, width - 1)] + 2) continue;
+            float k = 0.35f + 1.4f * mag;
+            byte hue = (byte)(tint * 255);
+            PutGlint(cx, cy, k, hue);
+            int arms = mag > 0.5f ? (int)(2 * scale + 1) : 1;
+            for (int a = 1; a <= arms; a++)
+            {
+                float v = k * 0.4f / a;
+                PutGlint(cx + a, cy, v, hue);
+                PutGlint(cx - a, cy, v, hue);
+                PutGlint(cx, cy + a, v, hue);
+                PutGlint(cx, cy - a, v, hue);
+            }
+        }
+    }
+
+    void PutGlint(int px, int py, float v, byte hue)
+    {
+        if (px < 0 || px >= Width || py < 0 || py >= Height) return;
+        glintPower[py * Width + px] += v;
+        glintHue[py * Width + px] = hue;
     }
 
     float Terrain(Layer layer, uint s, float x)
@@ -527,9 +562,34 @@ sealed class Scene
             return Col.Smoothstep(cloudEdge, cloudEdge + cloudSoft, n) * (1 - Col.Smoothstep(horizon * 0.75f, horizon * 1.02f, y));
         };
         RGB fogColor = Col.MixOklab(pal.Horizon, Col.Desaturate(pal.Mid, 0.6f), 0.4f);
-        RGB rainColor = Col.MixOklab(pal.Horizon, new RGB(1, 1, 1), 0.25f);
-        float rainCell = Math.Max(0.0065f * H, 4);
-        uint rainSeed = Col.Hash32(seed ^ 0x2c1b3c6d);
+
+        // The sea of clouds, seen from above, just below the far ranges. Its
+        // top is rounded humps with creases between (|noise|, as cumulus tops
+        // go); inside, billows shrink toward the horizon, each lit on top and
+        // shaded beneath; a faint haze of light hangs over it.
+        RGB seaLit = Col.MixOklab(pal.Horizon, pal.Glow, 0.5f) * 1.3f;
+        RGB seaShade = Col.MixOklab(pal.Mid, pal.Horizon, 0.5f) * 0.8f;
+        uint seaSeed = Col.Hash32(seed ^ 0x6a09e667);
+        var seaTop = new float[w.Sea > 0 ? Width : 0];
+        for (int x = 0; x < seaTop.Length; x++)
+        {
+            float u = (x + 0.5f) / H;
+            seaTop[x] = (0.716f - 0.03f * Math.Abs(Col.Fbm(u * 3 + drift, 3, seaSeed))
+                         - 0.008f * Math.Abs(Col.Fbm(u * 11 + drift, 2, seaSeed ^ 0x9e3779b9))) * H;
+        }
+        // Fog lakes at the feet of the hills, bright under a clear sky.
+        RGB valleyColor = Col.MixOklab(pal.Horizon, pal.Mid, 0.2f) * 1.12f;
+
+        // After rain. The rainbow stands opposite the sun: from this view,
+        // which faces the sun's path, it rises at the far edge, and sinks as
+        // the sun climbs, gone above 42°. Glints wherever the sun is up.
+        float bowGain = 0.38f * w.Wet * Col.Smoothstep(-0.5f, 3, alt) * (1 - Col.Smoothstep(30, 41, alt));
+        float bowR = 0.78f * H;
+        float bowX = sunX > 0.5f * W ? -0.22f * W : 1.22f * W;
+        float bowY = horizonY + (0.12f + 0.5f * Col.Clamp01(alt / 42)) * H;
+        float glintGain = w.Wet * Col.Smoothstep(-2, 4, alt) * (0.6f + 0.4f * (1 - Col.Smoothstep(10, 35, alt)));
+        var hues = new RGB[w.Wet > 0 ? 256 : 0];
+        for (int i = 0; i < hues.Length; i++) hues[i] = Col.Spectrum(i / 255f);
         RGB flakeColor = Col.MixOklab(pal.Mid, new RGB(1, 1, 1), 0.6f);
         RGB snowGround = Col.MixOklab(pal.Mid, pal.Horizon, 0.5f) * 1.15f;
         var sky = new RGB[Height];
@@ -610,8 +670,28 @@ sealed class Scene
                     c = Col.Mix(c, fogColor, w.Fog * 0.6f * Col.Smoothstep(0.3f * H, horizonY, fy));
                 }
 
+                float frontTree = 0;  // how much of this pixel is tree or porch, in front
                 for (int l = 0; l < Layers.Length; l++)
                 {
+                    if (l == Layers.Length - 1 && w.Sea > 0)
+                    {
+                        // The sea of clouds, over everything but the cabin's hill.
+                        float above = seaTop[x] - fy;
+                        if (above > 0) c = c + seaLit * (0.08f * w.Sea * Col.Exp(-above / (0.012f * H)));
+                        float seaCov = Col.Clamp01(-above / 4 + 0.5f) * w.Sea;
+                        if (seaCov > 0)
+                        {
+                            float depth = Col.Clamp01(-above / (0.28f * H));
+                            float k = 1.8f - depth;  // billows grow toward the viewer
+                            float u = fx / H * 6 * k + drift, v = fy / H * 13 * k;
+                            float n = Col.Fbm2(u, v, 3, seaSeed);
+                            float up = Col.Fbm2(u, v - 0.18f, 3, seaSeed);
+                            float puff = Col.Smoothstep(-0.25f, 0.3f, n);       // lumps, with creases between
+                            float lit = Col.Clamp01(0.5f + 2.2f * (n - up));    // thinner above: a lit top
+                            float light = Col.Clamp01(0.98f - 0.45f * depth) * (0.45f + 0.3f * puff + 0.3f * lit);
+                            c = Col.Mix(c, Col.Mix(seaShade, seaLit, light) + pal.Glow * (g * 0.7f), seaCov);
+                        }
+                    }
                     int t0 = (l * width + x) * Sub;
                     float land = 0;
                     for (int s = 0; s < Sub; s++) land += Col.Clamp01(fy - top[t0 + s] + 0.5f);
@@ -646,8 +726,36 @@ sealed class Scene
                     {
                         tone = Col.Mix(tone, fogColor, w.Fog * (0.9f - 0.12f * l));
                     }
+                    if (w.Valley > 0)
+                    {
+                        // Fog lakes: each hill's foot sinks into bright fog; least in front.
+                        float lake = Col.Smoothstep(0.004f * H, 0.05f * H, fy - gy) * (l == Layers.Length - 1 ? 0.35f : l == 0 ? 0.6f : 0.9f);
+                        tone = Col.Mix(tone, valleyColor, w.Valley * lake * (1 - 0.5f * tree));
+                    }
                     tone = tone + pal.Glow * (g * layer.Haze * 0.8f);  // in-scattered sun
                     c = cov == 1 ? tone : Col.Mix(c, tone, cov);
+                    frontTree = frontTree * (1 - cov) + tree;
+                }
+
+                if (bowGain > 0)
+                {
+                    // Rainbow light, added: violet inside, red outside; the second
+                    // bow beyond, colors reversed; brighter sky inside the first,
+                    // Alexander's dark band between. It fades into the near hills.
+                    float bd = Col.Sqrt((fx - bowX) * (fx - bowX) + (fy - bowY) * (fy - bowY));
+                    float fade = 1 - Col.Smoothstep(horizonY + 0.05f * H, horizonY + 0.32f * H, fy);
+                    float bw = 0.05f * bowR, r2 = 1.21f * bowR, bw2 = 0.07f * bowR;
+                    float u = (bd - (bowR - bw)) / (2 * bw), u2 = (bd - (r2 - bw2)) / (2 * bw2);
+                    if (u > 0 && u < 1) c = c + hues[Math.Min((int)(u * 255), 255)] * (bowGain * Col.Pow((float)Math.Sin((float)Math.PI * u), 0.8f) * fade);
+                    if (u2 > 0 && u2 < 1) c = c + hues[Math.Min((int)((1 - u2) * 255), 255)] * (0.38f * bowGain * Col.Pow((float)Math.Sin((float)Math.PI * u2), 0.8f) * fade);
+                    if (bd < bowR - bw) c = c * (1 + 0.18f * bowGain * fade);
+                    else if (bd > bowR + bw && bd < r2 - bw2) c = c * (1 - 0.2f * bowGain * fade);
+                }
+                if (glintGain > 0)
+                {
+                    // On open ground only: not on the trees or the porch.
+                    float glint = glintPower[y * width + x] * (1 - Math.Min(frontTree, 1f));
+                    if (glint > 0) c = c + hues[glintHue[y * width + x]] * (glint * glintGain);
                 }
 
                 if (windowLight > 0)
@@ -658,21 +766,6 @@ sealed class Scene
                     c = c + windowColor * (0.08f * windowLight * Col.Exp(-Col.Sqrt(wdx * wdx + wdy * wdy) / (0.012f * H)));
                 }
 
-                if (w.Rain > 0)
-                {
-                    // Slanted streaks: one possible line per narrow column,
-                    // broken into dashes.
-                    float u = fx + fy * 0.18f;
-                    float col = (float)Math.Floor(u / rainCell);
-                    uint hc = Col.Hash32(unchecked((uint)(int)col ^ rainSeed));
-                    float line = Col.Clamp01(0.9f - Math.Abs(u - (col + 0.2f + 0.6f * Col.Unit(hc)) * rainCell));
-                    if (line > 0)
-                    {
-                        float dash = (float)Math.Floor((fy + Col.Unit(Col.Hash32(hc)) * 977) / (0.04f * H));
-                        if (Col.Unit(Col.Hash32(hc ^ unchecked((uint)(int)dash * 0x27d4eb2f))) < 0.3f)
-                            c = Col.Mix(c, rainColor, line * 0.22f * w.Rain);
-                    }
-                }
                 if (w.Snow > 0)
                 {
                     float f = flakes[y * width + x];

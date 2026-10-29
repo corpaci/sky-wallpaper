@@ -6,7 +6,7 @@ the right one for the time of day. Optionally, it follows your real sunrise,
 sunset and hourly weather.
 
 ![The frames of one clear day, from midnight to night](docs/preview.jpg)
-![Cloudy, overcast, rain, snow and fog](docs/weather.jpg)
+![Overcast as a sea of clouds, after rain, fog lakes, cloudy, snow](docs/weather.jpg)
 
 **Why it's cheap:** the desktop shows a still image and swaps it at set
 times; nothing animates. macOS swaps the frames itself (a dynamic HEIC). On
@@ -106,6 +106,16 @@ Get-Content "$env:LOCALAPPDATA\SkyWallpaper\sky.log" -Tail 20
 `LastTaskResult` 0 means the last run worked.
 
 ## Weather and privacy
+
+Grey weather isn't mirrored back at you; the sky shows what's beyond it:
+- **Overcast:** the view from above the deck, a sunlit sea of clouds with the
+  summit and far ridges breaking through, and sun, moon and stars clear
+  overhead.
+- **Fog:** fog lakes lie low in the far valleys under a clear sky.
+- **Rain:** the moment after. A rainbow stands opposite the sun while it's
+  low (from this view, at the far edge, with its faint second bow), and the
+  wet grass glints in every color.
+- **Snow and cloudy days** are shown as they are.
 
 Weather comes from [Open-Meteo](https://open-meteo.com): free, no account,
 no key. Once a day, one request carries the date and your coordinates

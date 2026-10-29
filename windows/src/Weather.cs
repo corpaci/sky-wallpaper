@@ -10,11 +10,19 @@ enum Sky { Clear, Cloudy, Overcast, Rain, Snow, Fog }
 
 /// The renderer's knobs for a `Sky`, each 0…1. The renderer only reads these,
 /// so what a class looks like is tuned here, in one place.
+///
+/// Grey weather isn't mirrored; the scene shows what's beyond it. Overcast
+/// is the view from above the deck, a sunlit sea of clouds, with the sky,
+/// sun, moon and stars clear overhead. Fog lies low in the far valleys under
+/// a clear sky. Rain is the moment after: wet light, a rainbow opposite the
+/// sun, colored glints on the grass.
 sealed class Weather
 {
     public readonly float Clouds;    // cover of drifting clouds in the sky
     public readonly float Overcast;  // a grey deck: dims and greys the palette, hides sun and stars
-    public readonly float Rain;      // streak density
+    public readonly float Sea;       // a sea of clouds below the cabin's hill, ranges breaking through
+    public readonly float Valley;    // fog lakes at the feet of the far hills
+    public readonly float Wet;       // after rain: rainbow opposite a low sun, glints on the grass
     public readonly float Snow;      // flake density; also whitens the ground under the pines
     public readonly float Fog;       // haze that swallows far layers first
 
@@ -23,10 +31,10 @@ sealed class Weather
         switch (sky)
         {
             case Sky.Cloudy: Clouds = 0.5f; Overcast = 0.1f; break;
-            case Sky.Overcast: Clouds = 0.95f; Overcast = 0.75f; Fog = 0.1f; break;
-            case Sky.Rain: Clouds = 1; Overcast = 0.9f; Rain = 1; Fog = 0.35f; break;
+            case Sky.Overcast: Sea = 1; break;
+            case Sky.Rain: Clouds = 0.45f; Overcast = 0.08f; Wet = 1; Fog = 0.12f; break;
             case Sky.Snow: Clouds = 1; Overcast = 0.6f; Snow = 1; Fog = 0.3f; break;
-            case Sky.Fog: Overcast = 0.35f; Fog = 1; break;
+            case Sky.Fog: Valley = 1; Fog = 0.08f; break;
         }
     }
 

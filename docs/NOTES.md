@@ -43,8 +43,21 @@ open ground.
 between 3 and 21 hours, centered on solar noon, so every frame keeps its own
 minute. The manifest header says when that happens (polar night or day).
 
-**Weather.** Each sky (clear, cloudy, overcast, rain, snow, fog) maps to five
-knobs in `Weather`: clouds, overcast, rain, snow and fog. The forecast is
+**Weather.** Each sky (clear, cloudy, overcast, rain, snow, fog) maps to knobs
+in `Weather`: clouds, overcast, sea, valley, wet, snow and fog. Grey weather
+isn't mirrored:
+- **Overcast** draws a sea of clouds just below the far ranges, behind the
+  cabin's hill. Its top is |noise| humps; its billows shrink toward the
+  horizon and are lit where the noise thins upward.
+- **Fog** sinks each hill's foot into bright fog lakes, least in front.
+- **Rain** is the moment after:
+  - a primary and secondary bow (reversed colors, Alexander's dark band, a
+    brighter sky inside) centred opposite the sun's side of the view, sinking
+    as the sun climbs and gone above about 42°;
+  - glints on open ground (never on trees or the porch), each one color of
+    the spectrum.
+
+The forecast is
 Open-Meteo's hourly `weather_code` and `cloud_cover`. WMO codes decide fog,
 snow and rain; cloud cover decides the rest (under 30% clear, under 75%
 cloudy, otherwise overcast). Each frame takes its hour's sky. Extra frames go

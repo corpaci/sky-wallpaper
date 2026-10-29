@@ -39,6 +39,16 @@ func mixOklab(_ x: RGB, _ y: RGB, _ t: Float) -> RGB {
     return fromOklab((lerp(a.0, b.0, t), lerp(a.1, b.1, t), lerp(a.2, b.2, t)))
 }
 
+private let spectrumStops: [RGB] = [0x8b5cf6, 0x3b82f6, 0x22d3ee, 0x34d399, 0xfde047, 0xfb923c, 0xef4444].map { RGB(hex: $0) }
+
+/// The visible spectrum from violet (0) to red (1), blended in OKLab: the
+/// colors of a rainbow's band, or of light split by a drop.
+func spectrum(_ t: Float) -> RGB {
+    let x = clamp01(t) * Float(spectrumStops.count - 1)
+    let i = min(Int(x), spectrumStops.count - 2)
+    return mixOklab(spectrumStops[i], spectrumStops[i + 1], x - Float(i))
+}
+
 /// Toward grey at the same lightness: OKLab chroma scaled down by `t`.
 func desaturate(_ c: RGB, _ t: Float) -> RGB {
     let l = toOklab(c)

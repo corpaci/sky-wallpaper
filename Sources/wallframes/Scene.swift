@@ -140,6 +140,8 @@ struct Scene {
     private let cabin: Cabin
     private let stars: [Float]    // linear RGB, full frame
     private let flakes: [Float]   // snowflake coverage, full frame
+    private let glintPower: [Float] // drops on the wet meadow, full frame
+    private let glintHue: [UInt8]   // and the color each catches, 0 = violet … 255 = red
     private let seed: UInt32
 
     init(width: Int, height: Int, seed: UInt32) {
@@ -315,6 +317,31 @@ struct Scene {
             }
         }
         flakes = flakeCover
+
+        // Glints: drops on the wet meadow, each splitting the low sun into
+        // one color. Drawn only after rain.
+        var power = [Float](repeating: 0, count: width * height)
+        var tints = [UInt8](repeating: 0, count: width * height)
+        var glintRng = SplitMix(state: UInt64(seed) &* 0x94d049bb133111eb | 1)
+        for _ in 0..<(width * height / 1200) {
+            let gx = glintRng.unit() * w, gy = (0.68 + 0.32 * glintRng.unit()) * h
+            let tint = glintRng.unit(), mag = powf(glintRng.unit(), 3)
+            let (cx, cy) = (Int(gx), Int(gy))
+            guard cy < height, gy > groundY[2 * width + min(cx, width - 1)] + 2 else { continue }
+            let k = 0.35 + 1.4 * mag
+            func put(_ px: Int, _ py: Int, _ v: Float) {
+                guard px >= 0, px < width, py >= 0, py < height else { return }
+                power[py * width + px] += v
+                tints[py * width + px] = UInt8(tint * 255)
+            }
+            put(cx, cy, k)
+            for a in 1...(mag > 0.5 ? Int(2 * scale + 1) : 1) {
+                let v = k * 0.4 / Float(a)
+                put(cx + a, cy, v); put(cx - a, cy, v); put(cx, cy + a, v); put(cx, cy - a, v)
+            }
+        }
+        glintPower = power
+        glintHue = tints
         self.seed = seed
     }
 
@@ -362,10 +389,33 @@ struct Scene {
             return smoothstep(cloudEdge, cloudEdge + cloudSoft, n) * (1 - smoothstep(horizon * 0.75, horizon * 1.02, y))
         }
         let fogColor = mixOklab(pal.horizon, desaturate(pal.mid, 0.6), 0.4)
-        let rainColor = mixOklab(pal.horizon, RGB(1, 1, 1), 0.25)
-        let (rainCell, rainSeed) = (max(0.0065 * H, 4), hash32(seed ^ 0x2c1b3c6d))
         let flakeColor = mixOklab(pal.mid, RGB(1, 1, 1), 0.6)
         let snowGround = mixOklab(pal.mid, pal.horizon, 0.5) * 1.15
+
+        // The sea of clouds, seen from above, just below the far ranges. Its
+        // top is rounded humps with creases between (|noise|, as cumulus tops
+        // go); inside, billows shrink toward the horizon, each lit on top and
+        // shaded beneath; a faint haze of light hangs over it.
+        let seaLit = mixOklab(pal.horizon, pal.glow, 0.5) * 1.3
+        let seaShade = mixOklab(pal.mid, pal.horizon, 0.5) * 0.8
+        let seaSeed = hash32(seed ^ 0x6a09e667)
+        let seaTop: [Float] = w.sea > 0 ? (0..<width).map { x in
+            let u = (Float(x) + 0.5) / h
+            return (0.716 - 0.03 * abs(fbm(u * 3 + drift, octaves: 3, seed: seaSeed))
+                    - 0.008 * abs(fbm(u * 11 + drift, octaves: 2, seed: seaSeed ^ 0x9e3779b9))) * h
+        } : []
+        // Fog lakes at the feet of the hills, bright under a clear sky.
+        let valleyColor = mixOklab(pal.horizon, pal.mid, 0.2) * 1.12
+
+        // After rain. The rainbow stands opposite the sun: from this view,
+        // which faces the sun's path, it rises at the far edge, and sinks as
+        // the sun climbs, gone above 42°. Glints wherever the sun is up.
+        let bowGain = 0.38 * w.wet * smoothstep(-0.5, 3, alt) * (1 - smoothstep(30, 41, alt))
+        let bowR = 0.78 * H
+        let bowX = sunX > 0.5 * W ? -0.22 * W : 1.22 * W
+        let bowY = horizonY + (0.12 + 0.5 * clamp01(alt / 42)) * H
+        let glintGain = w.wet * smoothstep(-2, 4, alt) * (0.6 + 0.4 * (1 - smoothstep(10, 35, alt)))
+        let hues: [RGB] = w.wet > 0 ? (0..<256).map { spectrum(Float($0) / 255) } : []
         let sky: [RGB] = (0..<height).map { y in
             let s = clamp01((Float(y) + 0.5) / horizonY)
             return s < 0.55 ? mixOklab(pal.zenith, pal.mid, s / 0.55)
@@ -433,7 +483,27 @@ struct Scene {
                         c = mix(c, fogColor, w.fog * 0.6 * smoothstep(0.3 * H, horizonY, fy))
                     }
 
+                    var frontTree: Float = 0  // how much of this pixel is tree or porch, in front
                     for l in 0..<layerCount {
+                        if l == layerCount - 1 && w.sea > 0 {
+                            // The sea of clouds, over everything but the cabin's hill.
+                            let above = seaTop[x] - fy
+                            if above > 0 {
+                                c = c + seaLit * (0.08 * w.sea * expf(-above / (0.012 * H)))
+                            }
+                            let cov = clamp01(-above / 4 + 0.5) * w.sea
+                            if cov > 0 {
+                                let depth = clamp01(-above / (0.28 * H))
+                                let k = 1.8 - depth  // billows grow toward the viewer
+                                let (u, v) = (fx / H * 6 * k + drift, fy / H * 13 * k)
+                                let n = fbm2(u, v, octaves: 3, seed: seaSeed)
+                                let up = fbm2(u, v - 0.18, octaves: 3, seed: seaSeed)
+                                let puff = smoothstep(-0.25, 0.3, n)        // lumps, with creases between
+                                let lit = clamp01(0.5 + 2.2 * (n - up))     // thinner above: a lit top
+                                let light = clamp01(0.98 - 0.45 * depth) * (0.45 + 0.3 * puff + 0.3 * lit)
+                                c = mix(c, mix(seaShade, seaLit, light) + pal.glow * (g * 0.7), cov)
+                            }
+                        }
                         let t0 = (l * width + x) * sub
                         var land: Float = 0
                         for s in 0..<sub { land += clamp01(fy - top[t0 + s] + 0.5) }
@@ -464,8 +534,33 @@ struct Scene {
                         if w.fog > 0 {
                             tone = mix(tone, fogColor, w.fog * (0.9 - 0.12 * Float(l)))
                         }
+                        if w.valley > 0 {
+                            // Fog lakes: each hill's foot sinks into bright fog; least in front.
+                            let lake = smoothstep(0.004 * H, 0.05 * H, fy - gy) * (l == layerCount - 1 ? 0.35 : l == 0 ? 0.6 : 0.9)
+                            tone = mix(tone, valleyColor, w.valley * lake * (1 - 0.5 * tree))
+                        }
                         tone = tone + pal.glow * (g * layer.haze * 0.8)   // in-scattered sun
                         c = cov == 1 ? tone : mix(c, tone, cov)
+                        frontTree = frontTree * (1 - cov) + tree
+                    }
+
+                    if bowGain > 0 {
+                        // Rainbow light, added: violet inside, red outside; the second
+                        // bow beyond, colors reversed; brighter sky inside the first,
+                        // Alexander's dark band between. It fades into the near hills.
+                        let d = ((fx - bowX) * (fx - bowX) + (fy - bowY) * (fy - bowY)).squareRoot()
+                        let fade = 1 - smoothstep(horizonY + 0.05 * H, horizonY + 0.32 * H, fy)
+                        let bw = 0.05 * bowR, r2 = 1.21 * bowR, bw2 = 0.07 * bowR
+                        let u = (d - (bowR - bw)) / (2 * bw), u2 = (d - (r2 - bw2)) / (2 * bw2)
+                        if u > 0 && u < 1 { c = c + hues[min(Int(u * 255), 255)] * (bowGain * powf(sinf(.pi * u), 0.8) * fade) }
+                        if u2 > 0 && u2 < 1 { c = c + hues[min(Int((1 - u2) * 255), 255)] * (0.38 * bowGain * powf(sinf(.pi * u2), 0.8) * fade) }
+                        if d < bowR - bw { c = c * (1 + 0.18 * bowGain * fade) }
+                        else if d > bowR + bw && d < r2 - bw2 { c = c * (1 - 0.2 * bowGain * fade) }
+                    }
+                    if glintGain > 0 {
+                        // On open ground only: not on the trees or the porch.
+                        let p = glintPower[y * width + x] * (1 - min(frontTree, 1))
+                        if p > 0 { c = c + hues[Int(glintHue[y * width + x])] * (p * glintGain) }
                     }
 
                     if windowLight > 0 {
@@ -475,20 +570,6 @@ struct Scene {
                         c = c + windowColor * (0.08 * windowLight * expf(-(wdx * wdx + wdy * wdy).squareRoot() / (0.012 * H)))
                     }
 
-                    if w.rain > 0 {
-                        // Slanted streaks: one possible line per narrow column,
-                        // broken into dashes.
-                        let u = fx + fy * 0.18
-                        let col = floorf(u / rainCell)
-                        let hc = hash32(UInt32(bitPattern: Int32(col)) ^ rainSeed)
-                        let line = clamp01(0.9 - abs(u - (col + 0.2 + 0.6 * unit(hc)) * rainCell))
-                        if line > 0 {
-                            let dash = floorf((fy + unit(hash32(hc)) * 977) / (0.04 * H))
-                            if unit(hash32(hc ^ (UInt32(bitPattern: Int32(dash)) &* 0x27d4eb2f))) < 0.3 {
-                                c = mix(c, rainColor, line * 0.22 * w.rain)
-                            }
-                        }
-                    }
                     if w.snow > 0 {
                         let f = flakes[y * width + x]
                         if f > 0.002 { c = mix(c, flakeColor, min(f * w.snow, 1)) }
