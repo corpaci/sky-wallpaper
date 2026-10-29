@@ -2,18 +2,22 @@
 
 A dynamic wallpaper for macOS and Windows. It renders a day of a snowcapped
 mountain above spruce forests and a little cabin with a porch, as still frames, and shows
-the right one for the time of day. Optionally, it follows your real sunrise,
-sunset and hourly weather.
+the right one for the time of day. The night sky is the real one: the moon
+in its phase and place, the planets, the bright stars, the Milky Way.
+Optionally, it follows your real sunrise, sunset and hourly weather.
 
 ![The frames of one clear day, from midnight to night](docs/preview.jpg)
 ![Overcast as a sea of clouds, after rain, fog lakes, cloudy, snow](docs/weather.jpg)
+![Night skies over Vienna: a waning gibbous moon, a crescent at dusk, the July Milky Way, a full moon](docs/night.jpg)
 
 **Why it's cheap:** the desktop shows a still image and swaps it at set
-times; nothing animates. macOS swaps the frames itself (a dynamic HEIC). On
-Windows, Task Scheduler starts a tiny helper at each switch time; it sets the
-frame and exits. With location or weather on, the day is rendered once,
-shortly after midnight: about a minute of low-priority CPU. On macOS, a small
-helper also stays loaded, but asleep: it wakes only when you switch desktops.
+times (17 to 19 a day, plus one per change in the weather); nothing
+animates. macOS swaps the frames itself (a
+dynamic HEIC). On Windows, Task Scheduler starts a tiny helper at each
+switch time; it sets the frame and exits. The installed versions render
+each day once, shortly after midnight: under a minute of low-priority CPU.
+On macOS, a small helper also stays loaded, but asleep: it wakes only when
+you switch desktops.
 
 No dependencies. Same inputs, same frames.
 
@@ -52,7 +56,7 @@ SUNRISE=07:20 SUNSET=17:55 ./make.sh 2560x1664
 
 Then go to System Settings → Wallpaper → add a photo → pick
 `out/sky-2560x1664-DATE.heic` → choose the dynamic option. Use one file per
-display. For your pixel size: `system_profiler SPDisplaysDataType | grep Resolution`.
+display. Its moon and stars stay those of the day you rendered it. For your pixel size: `system_profiler SPDisplaysDataType | grep Resolution`.
 
 **Screen saver:** it's a separate setting, and by default it plays a video.
 To keep the sky when idle, go to System Settings → Lock Screen → Start
@@ -94,7 +98,8 @@ powershell -ExecutionPolicy Bypass -File windows\install.ps1 -Latitude 48.2 -Lon
 - Everything lives in `%LOCALAPPDATA%\SkyWallpaper`, plus one scheduled task,
   `SkyWallpaper`. The task switches frames, renders the new day at 00:05,
   and catches up at logon, unlock and wake.
-- Without a location, it uses fixed `-Sunrise 07:20 -Sunset 17:55`.
+- Without a location, it uses fixed `-Sunrise 07:20 -Sunset 17:55`, and
+  still renders each day, for that day's moon and stars.
 
 If the frame looks stale:
 
@@ -104,6 +109,24 @@ Get-Content "$env:LOCALAPPDATA\SkyWallpaper\sky.log" -Tail 20
 ```
 
 `LastTaskResult` 0 means the last run worked.
+
+## The night sky
+
+Everything in the sky stands where it really is, for your place and the
+hour each frame shows:
+- **The moon:** its phase, its place, its lit side toward the sun, its
+  maria turned as you'd see them, earthshine on a thin crescent. A bright
+  moon turns the night blue and fades the faint stars. By day it's pale.
+- **Mercury to Saturn**, at their real brightness.
+- **2,847 stars**, every one brighter than magnitude 5.5 (the Yale Bright
+  Star Catalogue), in their colors, dimmed near the horizon.
+- **The Milky Way and the zodiacal light**, where they really lie, on dark
+  moonless nights. Their shapes are a model, not a photograph.
+
+The view faces the equator: north of it, the left edge is due east and the
+right edge due west. The moon is drawn about five times its real size, the
+way it looks to us. Without a location, the sky is drawn for 45° north at
+your time zone's longitude.
 
 ## Weather and privacy
 
@@ -170,7 +193,11 @@ run these on a Mac with Mono (`brew install mono`):
 ```bash
 windows/parity.sh     # every sky and a real forecast day, pixel by pixel
 tests/daylight.sh     # sunrise and sunset against published times
+tests/astronomy.sh    # eclipses, conjunctions and the like against known dates
 ```
+
+`data/bsc5-vmag5.5.tsv` is the star catalogue as downloaded; after changing
+it, `swift tools/stars.swift` rewrites the stars for both renderers.
 
 ## Status
 
@@ -185,3 +212,11 @@ tests/daylight.sh     # sunrise and sunset against published times
   - the one-line and double-click installers.
 
 Details and measurements: [docs/NOTES.md](docs/NOTES.md).
+
+## Credits
+
+Stars: the Bright Star Catalogue, 5th revised edition (Hoffleit and Warren,
+1991; catalogue V/50), retrieved with the VizieR catalogue access tool, CDS,
+Strasbourg, France ([doi:10.26093/cds/vizier](https://doi.org/10.26093/cds/vizier)).
+Positions of the sun, moon and planets follow Paul Schlyter's
+[How to compute planetary positions](https://stjarnhimlen.se/comp/ppcomp.html).

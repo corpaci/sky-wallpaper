@@ -211,8 +211,8 @@ static class Program
         Func<string, string, string> get = (name, fallback) => config.ContainsKey(name) ? config[name] : fallback;
         bool located = config.ContainsKey("lat") && config.ContainsKey("lon");
 
-        // Located skies change daily; fixed times render once.
-        string key = located ? Today() : "fixed";
+        // A new day, a new sky: the moon and stars move even when the times stay fixed.
+        string key = Today();
         string dir = Directory.GetDirectories(app, "frames-" + key + "-*")
             .Where(d => Directory.GetFiles(d, "manifest.txt", SearchOption.AllDirectories).Length > 0)
             .OrderByDescending(d => d, StringComparer.Ordinal).FirstOrDefault();
@@ -399,6 +399,14 @@ static class Program
         }
         if (outDir == null && !dryRun) throw new UsageException("render needs --out DIR");
         if (sunset - sunrise < 120) throw new UsageException("sunset must be at least two hours after sunrise");
+
+        // Where and when the night sky is seen.
+        DateTime skyDay;
+        if (!DateTime.TryParseExact(day, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out skyDay))
+            throw new UsageException("--date wants yyyy-MM-dd");
+        int skyOffset = utcOffset.HasValue ? utcOffset.Value : (int)TimeZoneInfo.Local.GetUtcOffset(skyDay.AddHours(12)).TotalMinutes;
+        double skyLatitude = latitude.HasValue ? latitude.Value : 45;
+        double skyLongitude = longitude.HasValue ? longitude.Value : skyOffset / 4.0;
         if (sizes.Count == 0 && dryRun) sizes.Add(new[] { 2560, 1664 });
         if (sizes.Count == 0)
         {
@@ -424,10 +432,28 @@ static class Program
         for (int i = 0; i < evening.Length; i++)
             frames.Add(new Frame { Label = evening[i], Minute = sun.MinuteAt(eveningAlt[i], true), Flags = evening[i] == "sunset" ? "primary" : "" });
         frames = frames.OrderBy(f => f.Minute).ToList();
-        if (forcedSky.HasValue) foreach (Frame f in frames) f.Sky = forcedSky.Value;
         for (int i = 1; i < frames.Count; i++)
             if (frames[i].Minute == frames[i - 1].Minute)
                 throw new UsageException(frames[i - 1].Label + " and " + frames[i].Label + " both land on " + Clock(frames[i].Minute) + "; day or night too short for this schedule");
+
+        // The sky turns 15° an hour. A frame at 00:00 keeps the small hours on
+        // this day's moon, and at night no frame shows for more than two hours.
+        if (frames[0].Minute > 0) frames.Insert(0, new Frame { Label = "hour-00", Minute = 0 });
+        var nightFrames = new List<Frame>();
+        for (int i = 0; i < frames.Count; i++)
+        {
+            int end = i + 1 < frames.Count ? frames[i + 1].Minute : 1440;
+            int gap = end - frames[i].Minute;
+            if (gap <= 120 || !(sun.Altitude((frames[i].Minute + gap / 2) % 1440) < -6)) continue;
+            int parts = (gap + 119) / 120;
+            for (int k = 1; k < parts; k++)
+            {
+                int m = frames[i].Minute + gap * k / parts;
+                nightFrames.Add(new Frame { Label = string.Format("night-{0:D2}{1:D2}", m / 60, m % 60), Minute = m });
+            }
+        }
+        frames = frames.Concat(nightFrames).OrderBy(f => f.Minute).ToList();
+        if (forcedSky.HasValue) foreach (Frame f in frames) f.Sky = forcedSky.Value;
 
         // Weather: each frame takes its hour's sky, plus one more frame on every
         // hour the sky changes, so the change shows on time.
@@ -458,9 +484,6 @@ static class Program
                 frames.Add(new Frame { Label = string.Format("hour-{0:D2}", hour), Minute = hour * 60, Sky = forecast.Hours[hour] });
             }
             frames = frames.OrderBy(f => f.Minute).ToList();
-            // Before the day's first frame the last one shows (it wraps past midnight).
-            if (frames[0].Minute > 0 && frames[frames.Count - 1].Sky != forecast.Hours[0])
-                frames.Insert(0, new Frame { Label = "hour-00", Minute = 0, Sky = forecast.Hours[0] });
         }
         string skyNote = forecast != null ? ", hourly weather" : forcedSky.HasValue ? ", sky " + Weather.Name(forcedSky.Value) : "";
 
@@ -490,10 +513,15 @@ static class Program
                 clock.Restart();
                 Frame f = frames[i];
                 string name = string.Format("{0:D2}-{1}.png", i, f.Name);
-                byte[] pixels = scene.Render(f.Minute, sun, Col.Hash32(unchecked((uint)i + seed)), new Weather(f.Sky));
+                // The sky as it stands halfway through the time this frame shows.
+                int end = i + 1 < frames.Count ? frames[i + 1].Minute : 1440;
+                var sky = new Ephemeris(skyLatitude, skyLongitude,
+                                        Ephemeris.DayNumber(skyDay.Year, skyDay.Month, skyDay.Day, (f.Minute + end) / 2.0 - skyOffset));
+                byte[] pixels = scene.Render(f.Minute, sun, sky, Col.Hash32(unchecked((uint)i + seed)), new Weather(f.Sky));
                 Png.Write(Path.Combine(dir, name), pixels, width, height);
                 manifest.Add(Clock(f.Minute) + "  " + name + (f.Flags == "" ? "" : "  " + f.Flags));
-                Console.WriteLine("{0}  {1}  sun {2:+0.0;-0.0} deg  {3:F2}s", Clock(f.Minute), name, sun.Altitude(f.Minute), clock.Elapsed.TotalSeconds);
+                Console.WriteLine("{0}  {1}  sun {2:+0.0;-0.0} deg  moon {3,3:F0}% {4:+0.0;-0.0} deg  {5:F2}s", Clock(f.Minute), name,
+                                  sun.Altitude(f.Minute), sky.MoonLit * 100, Math.Asin(sky.Moon.Z) * 180 / Math.PI, clock.Elapsed.TotalSeconds);
             }
             File.WriteAllLines(Path.Combine(dir, "manifest.txt"), manifest);
             Console.WriteLine("{0} frames -> {1}", frames.Count, Path.GetFullPath(dir));

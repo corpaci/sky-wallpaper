@@ -8,7 +8,9 @@
 // Frames sit at fixed sun altitudes, so they bunch up around sunrise and
 // sunset, where the sky changes fastest. With --lat/--lon the day's real
 // sunrise and sunset are computed (for today unless --date says otherwise);
-// otherwise the fixed times apply. --dry-run prints the schedule only.
+// otherwise the fixed times apply. The moon, planets and stars are the real
+// ones for that date and place (without --lat/--lon, 45° north at the time
+// zone's longitude). --dry-run prints the schedule only.
 
 import Foundation
 import ImageIO
@@ -100,6 +102,15 @@ if latitude != nil || longitude != nil {
 }
 guard sunset - sunrise >= 120 else { fail("sunset must be at least two hours after sunrise") }
 
+// Where and when the night sky is seen.
+let ymd = day.split(separator: "-").compactMap { Int($0) }
+var utcCalendar = Calendar(identifier: .gregorian)
+utcCalendar.timeZone = TimeZone(identifier: "UTC")!
+guard ymd.count == 3, let noonUTC = utcCalendar.date(from: DateComponents(year: ymd[0], month: ymd[1], day: ymd[2], hour: 12)),
+      utcCalendar.component(.day, from: noonUTC) == ymd[2] else { fail("--date wants yyyy-MM-dd") }
+let skyOffset = utcOffset ?? TimeZone.current.secondsFromGMT(for: noonUTC) / 60
+let skyLatitude = latitude ?? 45, skyLongitude = longitude ?? Double(skyOffset) / 4
+
 struct Frame {
     let label: String
     let minute: Int
@@ -122,6 +133,21 @@ frames.sort { $0.minute < $1.minute }
 for (a, b) in zip(frames, frames.dropFirst()) where a.minute == b.minute {
     fail("\(a.label) and \(b.label) both land on \(clock(a.minute)); day or night too short for this schedule")
 }
+
+// The sky turns 15° an hour. A frame at 00:00 keeps the small hours on this
+// day's moon, and at night no frame shows for more than two hours.
+if frames[0].minute > 0 { frames.insert(Frame(label: "hour-00", minute: 0), at: 0) }
+var nightFrames: [Frame] = []
+for (frame, end) in zip(frames, frames.dropFirst().map(\.minute) + [1440]) {
+    let gap = end - frame.minute
+    guard gap > 120, sun.altitude((frame.minute + gap / 2) % 1440) < -6 else { continue }
+    let parts = (gap + 119) / 120
+    for k in 1..<parts {
+        let m = frame.minute + gap * k / parts
+        nightFrames.append(Frame(label: String(format: "night-%02d%02d", m / 60, m % 60), minute: m))
+    }
+}
+frames = (frames + nightFrames).sorted { $0.minute < $1.minute }
 if let forcedSky { for i in frames.indices { frames[i].sky = forcedSky } }
 
 // Weather: each frame takes its hour's sky, plus one more frame on every
@@ -147,10 +173,6 @@ if let forecast {
         frames.append(Frame(label: String(format: "hour-%02d", hour), minute: hour * 60, sky: forecast.hours[hour]))
     }
     frames.sort { $0.minute < $1.minute }
-    // Before the day's first frame the last one shows (it wraps past midnight).
-    if frames[0].minute > 0 && frames[frames.count - 1].sky != forecast.hours[0] {
-        frames.insert(Frame(label: "hour-00", minute: 0, sky: forecast.hours[0]), at: 0)
-    }
 }
 
 let header = "# wallframes \(width)x\(height), sunrise \(clock(sunrise)), sunset \(clock(sunset))\(dayNote), seed \(seed)"
@@ -178,11 +200,16 @@ var manifest = """
 for (i, frame) in frames.enumerated() {
     let t0 = Date()
     let name = String(format: "%02d-%@.png", i, frame.name)
-    let pixels = scene.render(minute: frame.minute, sun: sun, salt: hash32(UInt32(i) &+ seed), weather: Weather(frame.sky))
+    // The sky as it stands halfway through the time this frame shows.
+    let end = i + 1 < frames.count ? frames[i + 1].minute : 1440
+    let d = Ephemeris.dayNumber(year: ymd[0], month: ymd[1], day: ymd[2],
+                                minutesUT: Double(frame.minute + end) / 2 - Double(skyOffset))
+    let sky = Ephemeris(latitude: skyLatitude, longitude: skyLongitude, d: d)
+    let pixels = scene.render(minute: frame.minute, sun: sun, sky: sky, salt: hash32(UInt32(i) &+ seed), weather: Weather(frame.sky))
     writePNG(pixels, width: width, height: height, to: dir.appendingPathComponent(name))
     manifest += "\(clock(frame.minute))  \(name)\(frame.flags.isEmpty ? "" : "  " + frame.flags.joined(separator: " "))\n"
-    print(String(format: "%@  %@  sun %+5.1f°  %.2fs", clock(frame.minute), name,
-                 sun.altitude(frame.minute), Date().timeIntervalSince(t0)))
+    print(String(format: "%@  %@  sun %+5.1f°  moon %3.0f%% %+5.1f°  %.2fs", clock(frame.minute), name,
+                 sun.altitude(frame.minute), sky.moonLit * 100, asin(sky.moon.z) * 180 / .pi, Date().timeIntervalSince(t0)))
 }
 do { try manifest.write(to: dir.appendingPathComponent("manifest.txt"), atomically: true, encoding: .utf8) }
 catch { fail("cannot write manifest: \(error.localizedDescription)") }

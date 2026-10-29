@@ -8,7 +8,11 @@ not.
 **Frames.** 14 frames at fixed sun altitudes (−14°, −7°, −3°, 0.5°, 5°, 14° on
 each side of noon, plus noon and midnight), so they bunch around sunrise and
 sunset, where the sky changes fastest. The sun follows a sine arc between
-sunrise and sunset. Colors are blended in OKLab and dithered to 8 bits so slow
+sunrise and sunset. The night sky turns 15° an hour, so at night more frames
+go in until none shows for over two hours, and one goes at 00:00, so the
+small hours show this day's moon rather than the last frame's. That makes 17
+to 19 in Vienna, depending on the season. Each frame's sky is drawn for the
+middle of the time it shows. Colors are blended in OKLab and dithered to 8 bits so slow
 gradients don't band. Rendering is deterministic: two runs with the same
 inputs produce byte-identical PNGs (checked for both renderers, and from a
 fresh clone). The HEIC is not byte-identical between packs of the same
@@ -56,6 +60,37 @@ isn't mirrored:
     as the sun climbs and gone above about 42°;
   - glints on open ground (never on trees or the porch), each one color of
     the spectrum.
+
+**Night sky.** The light (palette, glow, the sun's disk) follows the
+stylized sun above. Everything else in the sky is placed by real astronomy
+for the frame's moment and place:
+- **Positions** (`Astronomy.swift`): sun, moon and planets from Paul
+  Schlyter's orbital elements with the main perturbations, about an
+  arcminute; the moon seen from the observer (parallax up to 1°); stars
+  precessed from J2000.
+- **View:** it faces the equator and spans 180° of azimuth across the width,
+  so the left edge is due east north of the equator (the sun's side flips
+  south of it), with altitude at the same scale up from 64% of the height.
+  At 3420 px wide that's 19 px per degree.
+- **The moon** is a sphere lit from the real sun's direction, flat to its
+  rim as the real moon is (Lommel–Seeliger), drawn about five times its real
+  size. Its maria are hand-placed patches; their north follows the ecliptic
+  pole, within 1.5° of the moon's axis. Earthshine on the dark side is
+  strongest in a thin crescent. Its light adds blue to the night palette, dims
+  the faint stars and washes out the Milky Way. By day it's drawn pale.
+- **Stars:** the 2,847 stars brighter than magnitude 5.5 from the Yale Bright
+  Star Catalogue, colored by B−V (a little more saturated than the eye
+  sees). The planets go through the same code with their magnitudes and
+  colors. Which ones show depends on the sun's depth (about magnitude −3.5
+  at the horizon down to 6 at −16°), on the moon, and on 0.25 magnitudes of
+  extinction per airmass. By day only Venus can show, faintly.
+- **The Milky Way** is a model in galactic coordinates rather than a survey
+  map: a band, widest and brightest toward Sagittarius, with bumps at Cygnus,
+  Carina and Cassiopeia, noise for star clouds, dust (the Great Rift, the
+  Coalsack, lanes) and 20,000 faint grain points crowding the band. It's
+  computed every 4 px and interpolated.
+- **The zodiacal light** is a soft cone along the ecliptic from the real
+  sun's position below the horizon, after full dark.
 
 The forecast is
 Open-Meteo's hourly `weather_code` and `cloud_cover`. WMO codes decide fog,
@@ -125,8 +160,36 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
   built-in compiler, in console and windowless builds, with no warnings.
   `windows/parity.sh` compares it with the Swift renderer for every sky and for
   a real forecast day (`tests/forecast-berlin-2026-10-28.json`). At worst,
-  0.015% of color values differ, each by one step out of 255. Schedules are
-  identical.
+  0.013% of color values differ, by at most two steps out of 255. Schedules
+  are identical.
+- **What the night sky costs (2026-10-29).** One day at 3420×2224 for
+  Vienna, before and after it:
+
+  | | Frames | Render CPU | HEIC |
+  |---|---|---|---|
+  | Before, any day | 14 | 15 s | 16.6 MB |
+  | 14 July | 17 | 19 s | 20.1 MB |
+  | 29 October | 19 | 22 s | 23.2 MB |
+
+  The extra frames are the night's. A night frame takes about 1.3 MB,
+  mostly the dither.
+- **Astronomy.** `tests/astronomy.sh` checks known events and makes the C#
+  port print the same numbers as Swift to three decimals:
+
+  | Event | Published | Here |
+  |---|---|---|
+  | Total solar eclipse, Dallas, 2024-04-08 18:42 UT: sun–moon gap | under 0.01° | 0.026° |
+  | Total lunar eclipse, 2025-09-07 18:11 UT: moon from the antisun | 0.27° (gamma −0.275) | 0.30° |
+  | Jupiter–Saturn, 2020-12-21 | 0.10°, 18:20 UT | 0.098°, 15:00 UT |
+  | Venus–Jupiter, 2023-03-01/02 | 0.5° | 0.49°, Mar 2 05:00 UT |
+  | Mercury's greatest elongation, 2024-03-24 | 18.7° | 18.70°, 22:00 UT |
+  | Mars at opposition | 2025-01-16 02:38 UT | Jan 16 02:00 UT |
+  | Jupiter at opposition, 2023-11-03 | magnitude −2.9 | −2.76 |
+  | Sun at published sunrise/sunset, five cities | −0.83° | −0.74° to −0.97° |
+  | Polaris from Berlin (52.52° N) | about 52.5° ± 0.74° | 53.0° |
+
+  The hourly steps limit the times to the hour. The test keeps a tolerance
+  for the rest.
 - **Sunrise and sunset.** `tests/daylight.sh` compares both renderers with
   published times from Open-Meteo's archive:
   - Berlin winter and summer, Madrid, Sydney and Quito: all within 1 minute;
@@ -193,15 +256,20 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
 
 ## Not verified
 
+- **The night sky against a real one.** The geometry is checked
+  (above); the look isn't. The maria are placed by hand, the Milky Way is a
+  model, and nobody has held a render up to the sky.
 - **macOS cache trimming.** A copy whose file no Space uses any more was still
   in that cache minutes later. If macOS never trims it, it grows by one
-  render's HEICs per day: about 27 MB on this Mac (3420×2224 plus 1920×1080).
+  render's HEICs per day: about 27 MB on this Mac (3420×2224 plus 1920×1080)
+  before the night frames, which add 20 to 40%.
   To watch it:
   `ls ~/Library/Containers/com.apple.wallpaper.extension.image/Data/Library/Caches/*.heic | wc -l`.
 - **macOS screen sizes over time.** The sizes-seen list only grows. A size
   that never comes back, for example after changing display scaling, keeps
   being rendered daily until it's removed from `screens`.
-- **Windows `tick`.** It has never run on Windows:
+- **Windows `tick`.** It now renders every day, even with fixed times, so
+  the moon stays true. It has never run on Windows:
   - `schtasks /XML` accepting this XML;
   - re-registering the task from inside its own run;
   - rendering through the windowless build;
@@ -217,3 +285,14 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
   returns name, region, country and coordinates; the GitHub ZIP unpacks to
   `sky-wallpaper-main\windows\install.ps1`; the scripts are ASCII; the
   `.cmd` files have CRLF line ends (kept by `.gitattributes`).
+
+## Data
+
+`data/bsc5-vmag5.5.tsv`: the Bright Star Catalogue, 5th revised edition
+(Hoffleit and Warren, 1991; VizieR V/50), every star with V < 5.5: HR
+number, J2000 position, V magnitude, B−V. It was fetched on 2026-10-29 from
+the VizieR mirror at `vizier.cfa.harvard.edu`. 20 stars have no B−V and are
+drawn sun-colored. VizieR's terms: free for scientific use, with an
+acknowledgement and a citation of the catalogue (README, Credits); for
+commercial use they defer to each catalogue's origin.
+`swift tools/stars.swift` turns the table into `Stars.swift` and `Stars.cs`.

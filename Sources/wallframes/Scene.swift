@@ -58,6 +58,14 @@ struct Palette {
         return Palette(zenith: grey(zenith, 0.35), mid: grey(mid, 0.25), horizon: grey(horizon, 0.2),
                        glow: grey(glow, 0.3), land: grey(land, 0.2))
     }
+
+    /// Under a bright moon the night sky turns deep blue, and land and snow
+    /// come out of the dark.
+    func moonlit(_ k: Float) -> Palette {
+        Palette(zenith: zenith + RGB(0.004, 0.008, 0.024) * k, mid: mid + RGB(0.006, 0.011, 0.030) * k,
+                horizon: horizon + RGB(0.009, 0.015, 0.034) * k, glow: glow + RGB(0.010, 0.016, 0.032) * k,
+                land: land + RGB(0.002, 0.004, 0.009) * k)
+    }
 }
 
 private func key(_ alt: Float, _ zenith: UInt32, _ mid: UInt32, _ horizon: UInt32,
@@ -138,7 +146,6 @@ struct Scene {
     private let snowLine: [Float] // [x] for the snowy layer
     private let snowSlope: [Float] // [x] its slope over ±3% of the height, so shading blends, not splits
     private let cabin: Cabin
-    private let stars: [Float]    // linear RGB, full frame
     private let flakes: [Float]   // snowflake coverage, full frame
     private let glintPower: [Float] // drops on the wet meadow, full frame
     private let glintHue: [UInt8]   // and the color each catches, 0 = violet … 255 = red
@@ -150,7 +157,7 @@ struct Scene {
         (W, H) = (Float(width), Float(height))
         horizonY = 0.64 * H
 
-        let (w, h, horizon, sub) = (W, H, horizonY, Self.sub)
+        let (w, h, sub) = (W, H, Self.sub)
 
         func terrain(_ layer: Layer, _ s: UInt32, _ x: Float) -> Float {
             let u = (x - w / 2) / h * layer.freq
@@ -273,33 +280,8 @@ struct Scene {
         snowLine = snow
         snowSlope = slopes
 
-        // Stars: mostly faint, a few bright, thinning toward the horizon.
-        var starLight = [Float](repeating: 0, count: width * height * 3)
-        var rng = SplitMix(state: UInt64(seed) &* 0x9e3779b97f4a7c15)
-        let scale = h / 1664
-        for _ in 0..<(width * height / 4500) {
-            let sx = rng.unit() * w
-            let sy = powf(rng.unit(), 1.3) * horizon * 0.98
-            let mag = powf(rng.unit(), 4)
-            let tint = mix(RGB(hex: 0xc9d6ff), RGB(hex: 0xfff1d6), rng.unit())
-                * ((0.05 + 0.9 * mag) * smoothstep(horizon, horizon * 0.55, sy))
-            let sigma = (0.55 + 0.9 * mag) * scale
-            let reach = Int((3 * sigma).rounded(.up))
-            let (cx, cy) = (Int(sx), Int(sy))
-            for py in max(cy - reach, 0)...min(cy + reach, height - 1) {
-                for px in max(cx - reach, 0)...min(cx + reach, width - 1) {
-                    let dx = Float(px) + 0.5 - sx, dy = Float(py) + 0.5 - sy
-                    let k = expf(-(dx * dx + dy * dy) / (2 * sigma * sigma))
-                    let i = (py * width + px) * 3
-                    starLight[i] += tint.r * k
-                    starLight[i + 1] += tint.g * k
-                    starLight[i + 2] += tint.b * k
-                }
-            }
-        }
-        stars = starLight
-
         // Snowflakes: soft dots, the big near ones rarer. Drawn only when it snows.
+        let scale = h / 1664
         var flakeCover = [Float](repeating: 0, count: width * height)
         var flakeRng = SplitMix(state: UInt64(seed) &* 0xd1b54a32d192ed03 | 1)
         for _ in 0..<(width * height / 2200) {
@@ -345,20 +327,41 @@ struct Scene {
         self.seed = seed
     }
 
-    /// One frame as 8-bit sRGB RGBX, dithered. `salt` varies the dither per frame.
-    func render(minute: Int, sun: SunModel, salt: UInt32, weather w: Weather = Weather(.clear)) -> [UInt8] {
+    /// One frame as 8-bit sRGB RGBX, dithered. `salt` varies the dither per
+    /// frame. Light follows the stylized `sun`; the moon, planets, stars and
+    /// Milky Way stand where `sky` puts them.
+    func render(minute: Int, sun: SunModel, sky: Ephemeris, salt: UInt32, weather w: Weather = Weather(.clear)) -> [UInt8] {
         let alt = sun.altitude(minute)
         let dayPhase = sun.dayPhase(minute)
         let evening = dayPhase.map { $0 >= 0.5 } ?? (sun.nightPhase(minute) < 0.5)
+        let clear = 1 - w.overcast  // how much of the sky shows
+
+        // The view faces the equator and spans 180° from east to west, so the
+        // sun rises on the left north of the equator and on the right south
+        // of it. Altitude climbs at the same scale.
+        let ppd = W / 180  // pixels per degree
+        let viewAz: Float = sky.latitude >= 0 ? 180 : 0, side: Float = sky.latitude >= 0 ? 1 : -1
+        let (w2, horizon) = (W / 2, horizonY)
+        func screen(_ v: Vec3) -> (x: Float, y: Float, alt: Float) {
+            let a = Float(asin(max(-1, min(1, v.z))) * 180 / .pi)
+            var daz = Float(atan2(v.x, v.y) * 180 / .pi) - viewAz
+            if daz > 180 { daz -= 360 } else if daz <= -180 { daz += 360 }
+            return (w2 + daz * ppd, horizon - a * ppd, a)
+        }
+
+        // The moon's light turns the night sky blue and brings the snow out.
+        let moon = screen(sky.moon), moonLit = Float(sky.moonLit)
+        let moonLight = powf(moonLit, 1.5) * smoothstep(-1, 20, moon.alt) * smoothstep(-5, -14, alt) * clear
         var pal = palette(alt: alt, evening: evening)
+        if moonLight > 0 { pal = pal.moonlit(moonLight) }
         if w.overcast > 0 { pal = pal.overcast(w.overcast) }
         let span = horizonY - 0.14 * H
 
-        // Sun: rises left, sets right; below the horizon it waits at its side.
-        // Cloud and fog veil its disk and glow.
+        // Sun: rises on its side, sets on the other; below the horizon it
+        // waits at its side. Cloud and fog veil its disk and glow.
         let veil = (1 - 0.85 * w.overcast) * (1 - 0.5 * w.fog)
         let p = dayPhase ?? (evening ? 1 : 0)
-        let sunX = W * (0.5 + (p - 0.5) * 0.8), sunY = horizonY - alt / sun.peak * span
+        let sunX = W * (0.5 + (p - 0.5) * 0.8 * side), sunY = horizonY - alt / sun.peak * span
         let sunR = 0.021 * H
         let sunVis = smoothstep(-1.5, 0.5, alt) * (1 - w.overcast) * (1 - 0.5 * w.fog)
         let sunColor = mix(pal.glow * 1.6, RGB(1, 0.97, 0.9) * 1.4, smoothstep(2, 20, alt))
@@ -367,14 +370,123 @@ struct Scene {
         let (gNear, gFar, gBand) = ((0.44 * low + 0.28 * day) * veil, (0.40 * low + 0.10 * day) * veil, 0.30 * low * veil)
         let (rNear, rFar, bandH, bandW) = (0.06 * H, 0.32 * H, 0.07 * H, 0.55 * W)
 
-        // Moon: crosses the night the same way, a fat crescent.
-        let q = min(sun.nightPhase(minute), 1)
-        let moonVis = (dayPhase == nil ? smoothstep(-1, -8, alt) : 0) * (1 - 0.95 * w.overcast)
-        let moonX = W * (0.5 + (q - 0.5) * 0.8), moonY = horizonY - 30 * sinf(.pi * q) / sun.peak * span
-        let moonR = 0.017 * H
+        // The moon, where it is, lit from where the sun is: pale by day; by
+        // night it hides the stars behind it, and earthshine lights its dark
+        // side, most in a thin crescent, when the Earth is nearly full in its sky.
+        let moonR = 0.013 * H
+        let moonVis = (1 - 0.95 * w.overcast) * (1 - 0.5 * w.fog) * smoothstep(-1.5, -0.5, moon.alt)
+        let opaque = smoothstep(6, -6, alt)
+        let moonGain = 0.3 + 0.7 * opaque
+        let haloGain = 0.05 * powf(moonLit, 1.3) * opaque * moonVis
+        let earthshine = 0.025 * (1 - moonLit) * (1 - moonLit) * opaque
         let moonColor = RGB(hex: 0xf3efe0), moonGlow = RGB(hex: 0x9fb4d8)
+        // Directions on the sky at the moon, as screen x and y (up): its north
+        // (the moon's axis is within 1.5° of the ecliptic pole's), and the sun.
+        let (maz, mal) = (atan2(sky.moon.x, sky.moon.y), asin(sky.moon.z))
+        let right = Vec3(cos(maz), -sin(maz), 0), upward = Vec3(-sin(mal) * sin(maz), -sin(mal) * cos(maz), cos(mal))
+        func toward(_ v: Vec3) -> (x: Float, y: Float) {
+            let t = v - sky.moon * v.dot(sky.moon)
+            let (a, b) = (t.dot(right), t.dot(upward)), n = max((a * a + b * b).squareRoot(), 1e-9)
+            return (Float(a / n), Float(b / n))
+        }
+        let toSun = toward(sky.sun), north = toward(sky.eclipticPole), west = (x: north.y, y: -north.x)
+        let phase = Float(sky.moonPhaseAngle * .pi / 180)
+        let light = (x: toSun.x * sinf(phase), y: toSun.y * sinf(phase), z: cosf(phase))
 
-        let starVis = smoothstep(-4, -14, alt) * (1 - w.overcast)
+        // Stars and planets: as many as the dark, the moon and the air let
+        // through. About magnitude 6 at full night; by day, only Venus, faint.
+        let limit = -3.5 + 9.5 * clamp01(-alt / 16) - 1.6 * moonLight
+        let contrast = 0.25 + 0.75 * smoothstep(-2, -8, alt)
+        let skyRows = min(height, Int(horizonY) + 2)
+        var starPower = [Float](repeating: 0, count: width * skyRows)
+        var starTint = [UInt8](repeating: 0, count: width * skyRows)
+        let scale = H / 1664
+        /// A point of light as a small Gaussian, its total the same wherever
+        /// it falls between pixels: `peak` is its height at `sigma`.
+        func splat(_ x: Float, _ y: Float, _ peak: Float, _ sigma: Float, _ bv: Float) {
+            let reach = Int((3 * sigma).rounded(.up))
+            let (cx, cy) = (Int(floorf(x)), Int(floorf(y)))
+            let (x0, x1, y0, y1) = (max(cx - reach, 0), min(cx + reach, width - 1), max(cy - reach, 0), min(cy + reach, skyRows - 1))
+            guard x0 <= x1, y0 <= y1 else { return }
+            var sum: Float = 0
+            for py in y0...y1 {
+                for px in x0...x1 {
+                    let dx = Float(px) + 0.5 - x, dy = Float(py) + 0.5 - y
+                    sum += expf(-(dx * dx + dy * dy) / (2 * sigma * sigma))
+                }
+            }
+            guard sum > 0 else { return }
+            let norm = peak * 2 * .pi * sigma * sigma / sum
+            let tint = UInt8(clamp01((bv + 0.4) / 2.4) * 255)
+            for py in y0...y1 {
+                for px in x0...x1 {
+                    let dx = Float(px) + 0.5 - x, dy = Float(py) + 0.5 - y
+                    let k = expf(-(dx * dx + dy * dy) / (2 * sigma * sigma))
+                    starPower[py * width + px] += norm * k
+                    if k > 0.3 { starTint[py * width + px] = tint }
+                }
+            }
+        }
+        func point(_ v: Vec3, _ magnitude: Float, _ bv: Float) {
+            guard v.z > 0 else { return }
+            let s = screen(v)
+            let m = magnitude + 0.25 * (airmass(s.alt) - 1)  // extinction: 0.25 magnitudes per airmass
+            let seen = smoothstep(limit + 0.5, limit - 0.5, m) * clear * contrast
+            guard seen > 0, s.x > -8, s.x < W + 8, s.y > -8 else { return }
+            let b = powf(10, -0.22 * (m - 1.5))  // brightness, compressed as the eye does
+            splat(s.x, s.y, min(0.32 * b, 0.9) * seen, max((0.5 + 0.28 * min(b, 9).squareRoot()) * scale, 0.6), bv)
+        }
+        if limit > -1.6 { for star in Star.catalog { point(sky.fromJ2000.apply(star.direction), star.magnitude, star.bv) } }
+        for planet in sky.planets { point(planet.direction, Float(planet.magnitude), Float(planet.bv)) }
+        let starColors = (0..<256).map { starColor(Float($0) / 255 * 2.4 - 0.4) }
+
+        // The Milky Way and the zodiacal light, on a grid of sky directions
+        // every 4 px (both are smooth at that scale), bilinear in between.
+        let mwSeen = smoothstep(-11, -18, alt) * (1 - 0.85 * moonLight) * clear
+        let mwGain = 0.02 * mwSeen
+        let zlGain = 0.006 * smoothstep(-13, -19, alt) * (1 - 0.9 * moonLight) * clear
+        // Its grain: stars too faint to see one by one, crowding the band.
+        if mwSeen > 0 {
+            for g in Star.grain {
+                let v = sky.fromJ2000.apply(g.direction)
+                guard v.z > 0 else { continue }
+                let s = screen(v)
+                guard s.x > -2, s.x < W + 2, s.y > -2 else { continue }
+                splat(s.x, s.y, 0.08 * g.light * mwSeen * powf(10, -0.1 * (airmass(s.alt) - 1)), max(0.5 * scale, 0.6), g.bv)
+            }
+        }
+        let gs = 4, gw = width / gs + 2, gh = skyRows / gs + 2
+        var glowGrid = [Float](repeating: 0, count: mwGain + zlGain > 0 ? gw * gh * 3 : 0)
+        if !glowGrid.isEmpty {
+            let (toGalactic, toEcliptic, sunLon) = (sky.toGalactic, sky.toEcliptic, Float(sky.sunLongitude))
+            let mwCool = RGB(hex: 0xc4d0ff), mwWarm = RGB(hex: 0xffe3c4), zlColor = RGB(hex: 0xfff0dc)
+            glowGrid.withUnsafeMutableBufferPointer { buf in
+                let g = buf.baseAddress!
+                DispatchQueue.concurrentPerform(iterations: gh) { j in
+                    for i in 0..<gw {
+                        let a = (horizon - Float(j * gs)) / ppd
+                        guard a > -1 else { continue }
+                        let al = Double(min(a, 90)) * .pi / 180, az = Double(viewAz + (Float(i * gs) - w2) / ppd) * .pi / 180
+                        let v = Vec3(cos(al) * sin(az), cos(al) * cos(az), sin(al))
+                        let fade = powf(10, -0.1 * (airmass(a) - 1))
+                        var c = RGB(0, 0, 0)
+                        if mwGain > 0 {
+                            let gal = toGalactic.apply(v)
+                            let (mw, warm) = milkyWay(Float(gal.lon), Float(gal.lat))
+                            c = mix(mwCool, mwWarm, warm) * (mw * mwGain * fade)
+                        }
+                        if zlGain > 0 {
+                            let e = toEcliptic.apply(v)
+                            var dl = abs(Float(e.lon) - sunLon)
+                            if dl > 180 { dl = 360 - dl }
+                            c = c + zlColor * (zodiacal(dl, Float(e.lat)) * zlGain * fade)
+                        }
+                        let o = (j * gw + i) * 3
+                        (g[o], g[o + 1], g[o + 2]) = (c.r, c.g, c.b)
+                    }
+                }
+            }
+        }
 
         // Weather. Clouds: wide, flat shapes from 2-D noise, thinning into the
         // distance, lit on the side toward the sun (pink-edged at sunset). They
@@ -383,7 +495,7 @@ struct Scene {
         let cloudShade = desaturate(mixOklab(pal.mid, pal.zenith, 0.5), 0.5) * 0.85
         let cloudEdge = 0.62 - 0.3 * w.clouds - 0.25 * w.overcast, cloudSoft = 0.12 + 0.3 * w.overcast
         let (cloudStep, cloudSeed, drift) = (0.02 * H, hash32(seed ^ 0x51ed270b), Float(minute) * 0.002)
-        let (h, horizon) = (H, horizonY)
+        let h = H
         func cloud(_ x: Float, _ y: Float) -> Float {
             let n = fbm2(x / h * 1.6 + drift, y / h * 5.5, octaves: 5, seed: cloudSeed) * 0.5 + 0.5
             return smoothstep(cloudEdge, cloudEdge + cloudSoft, n) * (1 - smoothstep(horizon * 0.75, horizon * 1.02, y))
@@ -416,7 +528,7 @@ struct Scene {
         let bowY = horizonY + (0.12 + 0.5 * clamp01(alt / 42)) * H
         let glintGain = w.wet * smoothstep(-2, 4, alt) * (0.6 + 0.4 * (1 - smoothstep(10, 35, alt)))
         let hues: [RGB] = w.wet > 0 ? (0..<256).map { spectrum(Float($0) / 255) } : []
-        let sky: [RGB] = (0..<height).map { y in
+        let gradient: [RGB] = (0..<height).map { y in
             let s = clamp01((Float(y) + 0.5) / horizonY)
             return s < 0.55 ? mixOklab(pal.zenith, pal.mid, s / 0.55)
                             : mixOklab(pal.mid, pal.horizon, powf((s - 0.55) / 0.45, 1.4))
@@ -446,27 +558,41 @@ struct Scene {
                     let d = (dx * dx + dy * dy).squareRoot()
                     let g = gNear * expf(-d / rNear) + gFar * expf(-d / rFar)
                         + gBand * expf(-abs(fy - horizonY) / bandH) * expf(-abs(dx) / bandW)
-                    var c = sky[y] + pal.glow * g
+                    var c = gradient[y] + pal.glow * g
                     let air = c                                        // sky without stars
-                    if starVis > 0 {
-                        let i = (y * width + x) * 3
-                        c = c + RGB(stars[i], stars[i + 1], stars[i + 2]) * starVis
+                    if y < skyRows {
+                        if !glowGrid.isEmpty {
+                            let u = fx / Float(gs), v = fy / Float(gs)
+                            let (i0, j0) = (Int(u), Int(v))
+                            let (fu, fv) = (u - Float(i0), v - Float(j0))
+                            let o = (j0 * gw + i0) * 3, o2 = o + gw * 3
+                            func at(_ k: Int) -> Float {
+                                lerp(lerp(glowGrid[o + k], glowGrid[o + 3 + k], fu), lerp(glowGrid[o2 + k], glowGrid[o2 + 3 + k], fu), fv)
+                            }
+                            c = c + RGB(at(0), at(1), at(2))
+                        }
+                        let s = starPower[y * width + x]
+                        if s > 0 { c = c + starColors[Int(starTint[y * width + x])] * s }
                     }
                     if sunVis > 0 {
                         let cov = clamp01(sunR - d + 0.5) * sunVis
                         if cov > 0 { c = mix(c, sunColor, cov) }
                     }
                     if moonVis > 0 {
-                        let mx = fx - moonX, my = fy - moonY
+                        let mx = fx - moon.x, my = fy - moon.y
                         let md = (mx * mx + my * my).squareRoot()
-                        let halo = moonGlow * (0.05 * moonVis * expf(-md / (0.05 * H)))
+                        let halo = moonGlow * (haloGain * expf(-md / (0.05 * H)))
                         c = c + halo
                         let disk = clamp01(moonR - md + 0.5) * moonVis
                         if disk > 0 {
-                            let sx = mx - 0.45 * moonR, sy = my + 0.2 * moonR
-                            let shadow = clamp01(0.95 * moonR - (sx * sx + sy * sy).squareRoot() + 0.5)
-                            c = mix(c, air + halo + moonColor * 0.004, disk)  // earthshine; hides stars
-                            c = mix(c, moonColor, disk * (1 - shadow))
+                            // A sphere lit by the sun, flat to its rim as the real
+                            // moon is (Lommel–Seeliger), with its maria.
+                            let dx = mx / moonR, dy = -my / moonR
+                            let z = max(1 - dx * dx - dy * dy, 0).squareRoot()
+                            let mu = max(dx * light.x + dy * light.y + z * light.z, 0)
+                            let lit = 2 * mu / (mu + max(z, 0.25))  // the floor keeps the rim from flaring
+                            let albedo = moonAlbedo(dx * west.x + dy * west.y, dx * north.x + dy * north.y)
+                            c = mix(c, air + halo, disk * opaque) + moonColor * (albedo * (lit * moonGain + earthshine) * disk)
                         }
                     }
                     if w.clouds > 0 && fy < horizonY * 1.02 {

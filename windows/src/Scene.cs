@@ -99,6 +99,19 @@ struct Palette
     }
 
     static RGB Grey(RGB c, float dim, float k) { return Col.Desaturate(c, 0.8f * k) * (1 - dim * k); }
+
+    /// Under a bright moon the night sky turns deep blue, and land and snow
+    /// come out of the dark.
+    public Palette Moonlit(float k)
+    {
+        Palette r;
+        r.Zenith = Zenith + new RGB(0.004f, 0.008f, 0.024f) * k;
+        r.Mid = Mid + new RGB(0.006f, 0.011f, 0.030f) * k;
+        r.Horizon = Horizon + new RGB(0.009f, 0.015f, 0.034f) * k;
+        r.Glow = Glow + new RGB(0.010f, 0.016f, 0.032f) * k;
+        r.Land = Land + new RGB(0.002f, 0.004f, 0.009f) * k;
+        return r;
+    }
 }
 
 static class Palettes
@@ -193,7 +206,6 @@ sealed class Scene
     readonly float[] snowLine;   // [x] for the snowy layer
     readonly float[] snowSlope;  // [x] its slope over ±3% of the height, so shading blends, not splits
     readonly float windowX0, windowX1, windowY0, windowY1;  // the cabin's window
-    readonly float[] stars;      // linear RGB, full frame
     readonly float[] flakes;     // snowflake coverage, full frame
     readonly float[] glintPower; // drops on the wet meadow, full frame
     readonly byte[] glintHue;    // and the color each catches, 0 = violet … 255 = red
@@ -320,36 +332,8 @@ sealed class Scene
                   trees, near, width, height);
         }
 
-        // Stars: mostly faint, a few bright, thinning toward the horizon.
-        stars = new float[width * height * 3];
-        var starRng = new SplitMix(unchecked((ulong)seed * 0x9e3779b97f4a7c15));
-        float scale = H / 1664;
-        int count = width * height / 4500;
-        for (int n = 0; n < count; n++)
-        {
-            float sx = starRng.Unit() * W;
-            float sy = Col.Pow(starRng.Unit(), 1.3f) * horizonY * 0.98f;
-            float mag = Col.Pow(starRng.Unit(), 4);
-            RGB tint = Col.Mix(RGB.Hex(0xc9d6ff), RGB.Hex(0xfff1d6), starRng.Unit())
-                * ((0.05f + 0.9f * mag) * Col.Smoothstep(horizonY, horizonY * 0.55f, sy));
-            float sigma = (0.55f + 0.9f * mag) * scale;
-            int reach = (int)Math.Ceiling(3 * sigma);
-            int cxs = (int)sx, cys = (int)sy;
-            for (int py = Math.Max(cys - reach, 0); py <= Math.Min(cys + reach, height - 1); py++)
-            {
-                for (int px = Math.Max(cxs - reach, 0); px <= Math.Min(cxs + reach, width - 1); px++)
-                {
-                    float dx = px + 0.5f - sx, dy = py + 0.5f - sy;
-                    float k = Col.Exp(-(dx * dx + dy * dy) / (2 * sigma * sigma));
-                    int i = (py * width + px) * 3;
-                    stars[i] += tint.R * k;
-                    stars[i + 1] += tint.G * k;
-                    stars[i + 2] += tint.B * k;
-                }
-            }
-        }
-
         // Snowflakes: soft dots, the big near ones rarer. Drawn only when it snows.
+        float scale = H / 1664;
         flakes = new float[width * height];
         var flakeRng = new SplitMix(unchecked(((ulong)seed * 0xd1b54a32d192ed03) | 1));
         int flakeCount = width * height / 2200;
@@ -509,27 +493,47 @@ sealed class Scene
         }
     }
 
-    /// One frame as 8-bit sRGB, 3 bytes per pixel, dithered. `salt` varies the
-    /// dither per frame.
-    public byte[] Render(int minute, SunModel sun, uint salt)
-    {
-        return Render(minute, sun, salt, new Weather(Sky.Clear));
-    }
+    /// Where a direction lands in the view: x, y and altitude.
+    struct ScreenPoint { public float X, Y, Alt; }
 
-    public byte[] Render(int minute, SunModel sun, uint salt, Weather w)
+    /// One frame as 8-bit sRGB, 3 bytes per pixel, dithered. `salt` varies the
+    /// dither per frame. Light follows the stylized `sun`; the moon, planets,
+    /// stars and Milky Way stand where `sky` puts them.
+    public byte[] Render(int minute, SunModel sun, Ephemeris sky, uint salt, Weather w)
     {
         float alt = sun.Altitude(minute);
         float? dayPhase = sun.DayPhase(minute);
         bool evening = dayPhase.HasValue ? dayPhase.Value >= 0.5f : sun.NightPhase(minute) < 0.5f;
+        float clear = 1 - w.Overcast;  // how much of the sky shows
+
+        // The view faces the equator and spans 180° from east to west, so the
+        // sun rises on the left north of the equator and on the right south
+        // of it. Altitude climbs at the same scale.
+        float ppd = W / 180;  // pixels per degree
+        float viewAz = sky.Latitude >= 0 ? 180 : 0, side = sky.Latitude >= 0 ? 1 : -1;
+        float w2 = W / 2, horizon = horizonY;
+        Func<Vec3, ScreenPoint> screen = v =>
+        {
+            float a = (float)(Math.Asin(Math.Max(-1, Math.Min(1, v.Z))) * 180 / Math.PI);
+            float daz = (float)(Math.Atan2(v.X, v.Y) * 180 / Math.PI) - viewAz;
+            if (daz > 180) daz -= 360; else if (daz <= -180) daz += 360;
+            return new ScreenPoint { X = w2 + daz * ppd, Y = horizon - a * ppd, Alt = a };
+        };
+
+        // The moon's light turns the night sky blue and brings the snow out.
+        ScreenPoint moon = screen(sky.Moon);
+        float moonLit = (float)sky.MoonLit;
+        float moonLight = Col.Pow(moonLit, 1.5f) * Col.Smoothstep(-1, 20, moon.Alt) * Col.Smoothstep(-5, -14, alt) * clear;
         Palette pal = Palettes.At(alt, evening);
+        if (moonLight > 0) pal = pal.Moonlit(moonLight);
         if (w.Overcast > 0) pal = pal.Overcast(w.Overcast);
         float span = horizonY - 0.14f * H;
 
-        // Sun: rises left, sets right; below the horizon it waits at its side.
-        // Cloud and fog veil its disk and glow.
+        // Sun: rises on its side, sets on the other; below the horizon it
+        // waits at its side. Cloud and fog veil its disk and glow.
         float veil = (1 - 0.85f * w.Overcast) * (1 - 0.5f * w.Fog);
         float p = dayPhase.HasValue ? dayPhase.Value : (evening ? 1 : 0);
-        float sunX = W * (0.5f + (p - 0.5f) * 0.8f), sunY = horizonY - alt / SunModel.Peak * span;
+        float sunX = W * (0.5f + (p - 0.5f) * 0.8f * side), sunY = horizonY - alt / SunModel.Peak * span;
         float sunR = 0.021f * H;
         float sunVis = Col.Smoothstep(-1.5f, 0.5f, alt) * (1 - w.Overcast) * (1 - 0.5f * w.Fog);
         RGB sunColor = Col.Mix(pal.Glow * 1.6f, new RGB(1, 0.97f, 0.9f) * 1.4f, Col.Smoothstep(2, 20, alt));
@@ -538,14 +542,136 @@ sealed class Scene
         float gNear = (0.44f * low + 0.28f * day) * veil, gFar = (0.40f * low + 0.10f * day) * veil, gBand = 0.30f * low * veil;
         float rNear = 0.06f * H, rFar = 0.32f * H, bandH = 0.07f * H, bandW = 0.55f * W;
 
-        // Moon: crosses the night the same way, a fat crescent.
-        float q = Math.Min(sun.NightPhase(minute), 1f);
-        float moonVis = (dayPhase.HasValue ? 0 : Col.Smoothstep(-1, -8, alt)) * (1 - 0.95f * w.Overcast);
-        float moonX = W * (0.5f + (q - 0.5f) * 0.8f), moonY = horizonY - 30 * (float)Math.Sin((float)Math.PI * q) / SunModel.Peak * span;
-        float moonR = 0.017f * H;
+        // The moon, where it is, lit from where the sun is: pale by day; by
+        // night it hides the stars behind it, and earthshine lights its dark
+        // side, most in a thin crescent, when the Earth is nearly full in its sky.
+        float moonR = 0.013f * H;
+        float moonVis = (1 - 0.95f * w.Overcast) * (1 - 0.5f * w.Fog) * Col.Smoothstep(-1.5f, -0.5f, moon.Alt);
+        float opaque = Col.Smoothstep(6, -6, alt);
+        float moonGain = 0.3f + 0.7f * opaque;
+        float haloGain = 0.05f * Col.Pow(moonLit, 1.3f) * opaque * moonVis;
+        float earthshine = 0.025f * (1 - moonLit) * (1 - moonLit) * opaque;
         RGB moonColor = RGB.Hex(0xf3efe0), moonGlow = RGB.Hex(0x9fb4d8);
+        // Directions on the sky at the moon, as screen x and y (up): its north
+        // (the moon's axis is within 1.5° of the ecliptic pole's), and the sun.
+        double maz = Math.Atan2(sky.Moon.X, sky.Moon.Y), mal = Math.Asin(sky.Moon.Z);
+        var right = new Vec3(Math.Cos(maz), -Math.Sin(maz), 0);
+        var upward = new Vec3(-Math.Sin(mal) * Math.Sin(maz), -Math.Sin(mal) * Math.Cos(maz), Math.Cos(mal));
+        Func<Vec3, float[]> toward = v =>
+        {
+            Vec3 t = v - sky.Moon * v.Dot(sky.Moon);
+            double ta = t.Dot(right), tb = t.Dot(upward), tn = Math.Max(Math.Sqrt(ta * ta + tb * tb), 1e-9);
+            return new[] { (float)(ta / tn), (float)(tb / tn) };
+        };
+        float[] toSun = toward(sky.Sun), north = toward(sky.EclipticPole);
+        float[] west = { north[1], -north[0] };
+        float phase = (float)(sky.MoonPhaseAngle * Math.PI / 180);
+        float lightX = toSun[0] * (float)Math.Sin(phase), lightY = toSun[1] * (float)Math.Sin(phase), lightZ = (float)Math.Cos(phase);
 
-        float starVis = Col.Smoothstep(-4, -14, alt) * (1 - w.Overcast);
+        // Stars and planets: as many as the dark, the moon and the air let
+        // through. About magnitude 6 at full night; by day, only Venus, faint.
+        float limit = -3.5f + 9.5f * Col.Clamp01(-alt / 16) - 1.6f * moonLight;
+        float contrast = 0.25f + 0.75f * Col.Smoothstep(-2, -8, alt);
+        int skyRows = Math.Min(Height, (int)horizonY + 2), width = Width;
+        var starPower = new float[width * skyRows];
+        var starTint = new byte[width * skyRows];
+        float scale = H / 1664;
+        // A point of light as a small Gaussian, its total the same wherever it
+        // falls between pixels: `peak` is its height at `sigma`.
+        Action<float, float, float, float, float> splat = (x, y, peak, sigma, bv) =>
+        {
+            int reach = (int)Math.Ceiling(3 * sigma);
+            int cx = (int)Math.Floor(x), cy = (int)Math.Floor(y);
+            int x0 = Math.Max(cx - reach, 0), x1 = Math.Min(cx + reach, width - 1);
+            int y0 = Math.Max(cy - reach, 0), y1 = Math.Min(cy + reach, skyRows - 1);
+            if (x0 > x1 || y0 > y1) return;
+            float sum = 0;
+            for (int py = y0; py <= y1; py++)
+                for (int qx = x0; qx <= x1; qx++)
+                {
+                    float sdx = qx + 0.5f - x, sdy = py + 0.5f - y;
+                    sum += Col.Exp(-(sdx * sdx + sdy * sdy) / (2 * sigma * sigma));
+                }
+            if (sum <= 0) return;
+            float norm = peak * 2 * (float)Math.PI * sigma * sigma / sum;
+            byte tint = (byte)(Col.Clamp01((bv + 0.4f) / 2.4f) * 255);
+            for (int py = y0; py <= y1; py++)
+                for (int qx = x0; qx <= x1; qx++)
+                {
+                    float sdx = qx + 0.5f - x, sdy = py + 0.5f - y;
+                    float k = Col.Exp(-(sdx * sdx + sdy * sdy) / (2 * sigma * sigma));
+                    starPower[py * width + qx] += norm * k;
+                    if (k > 0.3f) starTint[py * width + qx] = tint;
+                }
+        };
+        Action<Vec3, float, float> point = (v, magnitude, bv) =>
+        {
+            if (v.Z <= 0) return;
+            ScreenPoint sp = screen(v);
+            float m = magnitude + 0.25f * (NightSky.Airmass(sp.Alt) - 1);  // extinction: 0.25 magnitudes per airmass
+            float seen = Col.Smoothstep(limit + 0.5f, limit - 0.5f, m) * clear * contrast;
+            if (!(seen > 0) || !(sp.X > -8) || !(sp.X < W + 8) || !(sp.Y > -8)) return;
+            float b = Col.Pow(10, -0.22f * (m - 1.5f));  // brightness, compressed as the eye does
+            splat(sp.X, sp.Y, Math.Min(0.32f * b, 0.9f) * seen, Math.Max((0.5f + 0.28f * Col.Sqrt(Math.Min(b, 9))) * scale, 0.6f), bv);
+        };
+        if (limit > -1.6f) foreach (Star star in Star.Catalog) point(sky.FromJ2000.Apply(star.Direction), star.Magnitude, star.Bv);
+        foreach (Planet planet in sky.Planets) point(planet.Direction, (float)planet.Magnitude, (float)planet.Bv);
+        var starColors = new RGB[256];
+        for (int i = 0; i < 256; i++) starColors[i] = NightSky.StarColor(i / 255f * 2.4f - 0.4f);
+
+        // The Milky Way and the zodiacal light, on a grid of sky directions
+        // every 4 px (both are smooth at that scale), bilinear in between.
+        float mwSeen = Col.Smoothstep(-11, -18, alt) * (1 - 0.85f * moonLight) * clear;
+        float mwGain = 0.02f * mwSeen;
+        float zlGain = 0.006f * Col.Smoothstep(-13, -19, alt) * (1 - 0.9f * moonLight) * clear;
+        // Its grain: stars too faint to see one by one, crowding the band.
+        if (mwSeen > 0)
+        {
+            foreach (Star.Grain g in Star.Grains)
+            {
+                Vec3 v = sky.FromJ2000.Apply(g.Direction);
+                if (v.Z <= 0) continue;
+                ScreenPoint sp = screen(v);
+                if (!(sp.X > -2) || !(sp.X < W + 2) || !(sp.Y > -2)) continue;
+                splat(sp.X, sp.Y, 0.08f * g.Light * mwSeen * Col.Pow(10, -0.1f * (NightSky.Airmass(sp.Alt) - 1)), Math.Max(0.5f * scale, 0.6f), g.Bv);
+            }
+        }
+        const int gs = 4;
+        int gw = width / gs + 2, gh = skyRows / gs + 2;
+        var glowGrid = new float[mwGain + zlGain > 0 ? gw * gh * 3 : 0];
+        if (glowGrid.Length > 0)
+        {
+            Mat3 toGalactic = sky.ToGalactic, toEcliptic = sky.ToEcliptic;
+            float sunLon = (float)sky.SunLongitude;
+            RGB mwCool = RGB.Hex(0xc4d0ff), mwWarm = RGB.Hex(0xffe3c4), zlColor = RGB.Hex(0xfff0dc);
+            Parallel.For(0, gh, j =>
+            {
+                for (int i = 0; i < gw; i++)
+                {
+                    float a = (horizon - j * gs) / ppd;
+                    if (!(a > -1)) continue;
+                    double al = Math.Min(a, 90) * Math.PI / 180, az = (viewAz + (i * gs - w2) / ppd) * Math.PI / 180;
+                    var v = new Vec3(Math.Cos(al) * Math.Sin(az), Math.Cos(al) * Math.Cos(az), Math.Sin(al));
+                    float fade = Col.Pow(10, -0.1f * (NightSky.Airmass(a) - 1));
+                    var c = new RGB(0, 0, 0);
+                    if (mwGain > 0)
+                    {
+                        Vec3 gal = toGalactic.Apply(v);
+                        float[] mw = NightSky.MilkyWay((float)gal.Lon, (float)gal.Lat);
+                        c = Col.Mix(mwCool, mwWarm, mw[1]) * (mw[0] * mwGain * fade);
+                    }
+                    if (zlGain > 0)
+                    {
+                        Vec3 e = toEcliptic.Apply(v);
+                        float dl = Math.Abs((float)e.Lon - sunLon);
+                        if (dl > 180) dl = 360 - dl;
+                        c = c + zlColor * (NightSky.Zodiacal(dl, (float)e.Lat) * zlGain * fade);
+                    }
+                    int o = (j * gw + i) * 3;
+                    glowGrid[o] = c.R; glowGrid[o + 1] = c.G; glowGrid[o + 2] = c.B;
+                }
+            });
+        }
 
         // Weather. Clouds: wide, flat shapes from 2-D noise, thinning into the
         // distance, lit on the side toward the sun (pink-edged at sunset). They
@@ -555,7 +681,7 @@ sealed class Scene
         float cloudEdge = 0.62f - 0.3f * w.Clouds - 0.25f * w.Overcast, cloudSoft = 0.12f + 0.3f * w.Overcast;
         float cloudStep = 0.02f * H, drift = minute * 0.002f;
         uint cloudSeed = Col.Hash32(seed ^ 0x51ed270b);
-        float cloudH = H, horizon = horizonY;
+        float cloudH = H;
         Func<float, float, float> cloud = (x, y) =>
         {
             float n = Col.Fbm2(x / cloudH * 1.6f + drift, y / cloudH * 5.5f, 5, cloudSeed) * 0.5f + 0.5f;
@@ -592,18 +718,17 @@ sealed class Scene
         for (int i = 0; i < hues.Length; i++) hues[i] = Col.Spectrum(i / 255f);
         RGB flakeColor = Col.MixOklab(pal.Mid, new RGB(1, 1, 1), 0.6f);
         RGB snowGround = Col.MixOklab(pal.Mid, pal.Horizon, 0.5f) * 1.15f;
-        var sky = new RGB[Height];
+        var gradient = new RGB[Height];
         for (int y = 0; y < Height; y++)
         {
             float s = Col.Clamp01((y + 0.5f) / horizonY);
-            sky[y] = s < 0.55f ? Col.MixOklab(pal.Zenith, pal.Mid, s / 0.55f)
+            gradient[y] = s < 0.55f ? Col.MixOklab(pal.Zenith, pal.Mid, s / 0.55f)
                                : Col.MixOklab(pal.Mid, pal.Horizon, Col.Pow((s - 0.55f) / 0.45f, 1.4f));
         }
         RGB fog = pal.Horizon;
         var tones = new RGB[Layers.Length];
         for (int l = 0; l < Layers.Length; l++) tones[l] = Col.MixOklab(pal.Land, fog, Layers[l].Haze);
         float mistDepth = 0.10f * H;
-        int width = Width;
 
         // Snow takes the sky's light: white-blue by day, alpenglow pink at
         // sunrise and sunset, dim blue at night. Faces toward the sun are
@@ -626,12 +751,23 @@ sealed class Scene
                 float d = Col.Sqrt(dx * dx + dy * dy);
                 float g = gNear * Col.Exp(-d / rNear) + gFar * Col.Exp(-d / rFar)
                     + gBand * Col.Exp(-Math.Abs(fy - horizonY) / bandH) * Col.Exp(-Math.Abs(dx) / bandW);
-                RGB c = sky[y] + pal.Glow * g;
+                RGB c = gradient[y] + pal.Glow * g;
                 RGB air = c;  // sky without stars
-                if (starVis > 0)
+                if (y < skyRows)
                 {
-                    int i = (y * width + x) * 3;
-                    c = c + new RGB(stars[i], stars[i + 1], stars[i + 2]) * starVis;
+                    if (glowGrid.Length > 0)
+                    {
+                        float gu = fx / gs, gv = fy / gs;
+                        int i0 = (int)gu, j0 = (int)gv;
+                        float fu = gu - i0, fv = gv - j0;
+                        int go = (j0 * gw + i0) * 3, go2 = go + gw * 3;
+                        c = c + new RGB(
+                            Col.Lerp(Col.Lerp(glowGrid[go], glowGrid[go + 3], fu), Col.Lerp(glowGrid[go2], glowGrid[go2 + 3], fu), fv),
+                            Col.Lerp(Col.Lerp(glowGrid[go + 1], glowGrid[go + 4], fu), Col.Lerp(glowGrid[go2 + 1], glowGrid[go2 + 4], fu), fv),
+                            Col.Lerp(Col.Lerp(glowGrid[go + 2], glowGrid[go + 5], fu), Col.Lerp(glowGrid[go2 + 2], glowGrid[go2 + 5], fu), fv));
+                    }
+                    float sp = starPower[y * width + x];
+                    if (sp > 0) c = c + starColors[starTint[y * width + x]] * sp;
                 }
                 if (sunVis > 0)
                 {
@@ -640,17 +776,21 @@ sealed class Scene
                 }
                 if (moonVis > 0)
                 {
-                    float mx = fx - moonX, my = fy - moonY;
+                    float mx = fx - moon.X, my = fy - moon.Y;
                     float md = Col.Sqrt(mx * mx + my * my);
-                    RGB halo = moonGlow * (0.05f * moonVis * Col.Exp(-md / (0.05f * H)));
+                    RGB halo = moonGlow * (haloGain * Col.Exp(-md / (0.05f * H)));
                     c = c + halo;
                     float disk = Col.Clamp01(moonR - md + 0.5f) * moonVis;
                     if (disk > 0)
                     {
-                        float sx = mx - 0.45f * moonR, sy = my + 0.2f * moonR;
-                        float shadow = Col.Clamp01(0.95f * moonR - Col.Sqrt(sx * sx + sy * sy) + 0.5f);
-                        c = Col.Mix(c, air + halo + moonColor * 0.004f, disk);  // earthshine; hides stars
-                        c = Col.Mix(c, moonColor, disk * (1 - shadow));
+                        // A sphere lit by the sun, flat to its rim as the real
+                        // moon is (Lommel–Seeliger), with its maria.
+                        float ddx = mx / moonR, ddy = -my / moonR;
+                        float z = Col.Sqrt(Math.Max(1 - ddx * ddx - ddy * ddy, 0));
+                        float mu = Math.Max(ddx * lightX + ddy * lightY + z * lightZ, 0);
+                        float lit = 2 * mu / (mu + Math.Max(z, 0.25f));  // the floor keeps the rim from flaring
+                        float albedo = NightSky.MoonAlbedo(ddx * west[0] + ddy * west[1], ddx * north[0] + ddy * north[1]);
+                        c = Col.Mix(c, air + halo, disk * opaque) + moonColor * (albedo * (lit * moonGain + earthshine) * disk);
                     }
                 }
                 if (w.Clouds > 0 && fy < horizonY * 1.02f)
