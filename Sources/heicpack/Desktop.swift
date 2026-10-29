@@ -59,14 +59,33 @@ func follow(_ dir: URL) -> Never {
         FileHandle.standardOutput.write(Data("\(Date().formatted(.iso8601)) \(line)\n".utf8))
     }
     // sky-WIDTHxHEIGHT-yyyy-MM-dd-HHmm.heic, as daily.sh names them: the
-    // newest stamp is the current day's set.
-    func newest() -> [URL] {
-        let stamped = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).compactMap { name -> (String, String)? in
-            guard name.hasPrefix("sky-"), name.hasSuffix(".heic"), name.count > 24 else { return nil }
-            return (String(name.dropLast(5).suffix(15)), name)
+    // newest of each size is the current sky for that size.
+    func newest() -> [String: URL] {
+        var best: [String: String] = [:]
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [] {
+            guard name.hasPrefix("sky-"), name.hasSuffix(".heic"), name.count > 24 else { continue }
+            let size = String(name.dropFirst(4).dropLast(21))
+            if best[size].map({ $0.suffix(20) < name.suffix(20) }) ?? true { best[size] = name }
         }
-        guard let latest = stamped.map(\.0).max() else { return [] }
-        return stamped.filter { $0.0 == latest }.map { dir.appendingPathComponent($0.1) }
+        return best.mapValues { dir.appendingPathComponent($0) }
+    }
+    // A screen with no sky of its own size (new, or asleep at 00:05) gets
+    // the closest one for now, and the daily job is asked to render its own;
+    // at most once an hour per size, so a failing render can't loop.
+    var asked: [String: Date] = [:]
+    func render(_ size: String) {
+        if let last = asked[size], Date().timeIntervalSince(last) < 3600 { return }
+        asked[size] = Date()
+        let known = dir.deletingLastPathComponent().appendingPathComponent("screens")
+        let lines = ((try? String(contentsOf: known, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+        if !lines.contains(size) {
+            try? ((lines + [size]).joined(separator: "\n") + "\n").write(to: known, atomically: true, encoding: .utf8)
+        }
+        let job = Process()
+        job.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        job.arguments = ["kickstart", "gui/\(getuid())/local.sky-wallpaper"]
+        do { try job.run(); say("no sky for \(size) yet; asked the daily job to render one") }
+        catch { say("cannot start the daily job: \(error.localizedDescription)") }
     }
     var pending = false
     func check() {
@@ -75,7 +94,9 @@ func follow(_ dir: URL) -> Never {
         // Let the switch settle first, then read what that Space shows.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             pending = false
-            do { try setWallpapers(newest(), onlyChanges: true).forEach { say("set \($0)") } }
+            let skies = newest()
+            for s in screens() where skies["\(s.width)x\(s.height)"] == nil { render("\(s.width)x\(s.height)") }
+            do { try setWallpapers(Array(skies.values), onlyChanges: true).forEach { say("set \($0)") } }
             catch { say("cannot set: \(error.localizedDescription)") }
         }
     }

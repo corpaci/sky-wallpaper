@@ -49,12 +49,14 @@ for label in local.sky-wallpaper local.sky-wallpaper.follow; do
     launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
 done
 mkdir -p "$app/bin"
+# A new renderer or new settings mean today's sky is rendered again.
+config=$(printf 'LAT=%s\nLON=%s\nWEATHER=%s\nSEED=%s' "$lat" "$lon" "$weather" "$seed")
+changed=yes
+cmp -s .build/release/wallframes "$app/bin/wallframes" && [ -f "$app/config" ] \
+    && [ "$(cat "$app/config")" = "$config" ] && changed=no
 # Copies, so rebuilding the repo never changes what the jobs run.
 cp .build/release/wallframes .build/release/heicpack "$app/bin/"
 cp mac/daily.sh "$app/daily.sh"
-config=$(printf 'LAT=%s\nLON=%s\nWEATHER=%s\nSEED=%s' "$lat" "$lon" "$weather" "$seed")
-changed=yes
-[ -f "$app/config" ] && [ "$(cat "$app/config")" = "$config" ] && changed=no
 printf '%s\n' "$config" > "$app/config"
 [ -f "$app/previous.txt" ] || "$app/bin/heicpack" --save "$app/previous.txt"
 

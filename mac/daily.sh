@@ -5,9 +5,11 @@
 #   daily.sh [--force] [--no-set]
 #
 # Once a day is enough: macOS switches the frames inside the HEIC itself.
-# If today's sky exists it is only set again, unless --force. --no-set
-# renders and packs without touching the desktop. If the forecast can't be
-# fetched, today renders without weather rather than not at all.
+# Sizes that already have today's sky are only set again, unless --force;
+# the desktop follower also starts this job when a screen shows up with no
+# sky of its size. --no-set renders and packs without touching the desktop.
+# If the forecast can't be fetched, today renders without weather rather
+# than not at all.
 #
 # macOS sets a wallpaper per Space (desktop), and only the ones showing can
 # be set. Other Spaces keep an earlier day's sky until they are showing
@@ -30,31 +32,40 @@ done
 
 day=$(date +%F)
 mkdir -p "$app/out"
-made=()
-if [ "$force" = no ] && compgen -G "$app/out/sky-*-$day-*.heic" >/dev/null; then
-    # Today's sky exists. It still goes on the desktops showing now: macOS
-    # sets wallpapers per Space, and this may be one the render missed.
-    last=$(for f in "$app"/out/sky-*-"$day"-*.heic; do echo "${f: -9:4}"; done | sort | tail -1)
-    for f in "$app"/out/sky-*-"$day-$last".heic; do made+=("$f"); done
-    echo "$(date '+%F %T') today's sky exists"
+
+# Every screen size seen so far, not just the ones listed now: a closed lid or
+# a sleeping display drops out of the list at 00:05.
+known="$app/screens"
+sizes=$( { "$bin/heicpack" --screens; [ ! -f "$known" ] || cat "$known"; } | sort -u)
+printf '%s\n' "$sizes" > "$known"
+
+# Today's sky per size: kept if it exists (unless --force), rendered if not.
+# Either way it goes on the desktops showing now, since macOS sets wallpapers
+# per Space and this may be one an earlier run missed.
+stamp=$(date +%F-%H%M)  # a new path each render: macOS caches wallpapers by path
+work="$app/work"
+made=() rendered=()
+for size in $sizes; do
+    have=$(ls -t "$app"/out/sky-"$size"-"$day"-*.heic 2>/dev/null | head -1 || true)
+    if [ -n "$have" ] && [ "$force" = no ]; then made+=("$have"); continue; fi
+    frames="$work/$size"
+    rm -rf "${frames:?}"
+    args=(--size "$size" --lat "$LAT" --lon "$LON" --seed "$SEED" --out "$frames")
+    if [ "$WEATHER" = yes ] && "$bin/wallframes" "${args[@]}" --weather >/dev/null; then
+        :
+    else
+        [ "$WEATHER" = yes ] && echo "no forecast; rendering without weather" >&2
+        "$bin/wallframes" "${args[@]}" >/dev/null
+    fi
+    "$bin/heicpack" "$frames/manifest.txt" -o "$app/out/sky-$size-$stamp.heic"
+    made+=("$app/out/sky-$size-$stamp.heic")
+    rendered+=("$size")
+done
+rm -rf "${work:?}"
+if [ ${#rendered[@]} -gt 0 ]; then
+    echo "$(date '+%F %T') rendered $day for ${rendered[*]}"
 else
-    echo "$(date '+%F %T') rendering $day"
-    stamp=$(date +%F-%H%M)  # a new path each run: macOS caches wallpapers by path
-    work="$app/work"
-    rm -rf "${work:?}"
-    for size in $("$bin/heicpack" --screens | sort -u); do
-        frames="$work/$size"
-        args=(--size "$size" --lat "$LAT" --lon "$LON" --seed "$SEED" --out "$frames")
-        if [ "$WEATHER" = yes ] && "$bin/wallframes" "${args[@]}" --weather >/dev/null; then
-            :
-        else
-            [ "$WEATHER" = yes ] && echo "no forecast; rendering without weather" >&2
-            "$bin/wallframes" "${args[@]}" >/dev/null
-        fi
-        "$bin/heicpack" "$frames/manifest.txt" -o "$app/out/sky-$size-$stamp.heic"
-        made+=("$app/out/sky-$size-$stamp.heic")
-    done
-    rm -rf "${work:?}"
+    echo "$(date '+%F %T') today's sky exists"
 fi
 
 if [ "$set" = yes ]; then
