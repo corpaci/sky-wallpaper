@@ -506,10 +506,12 @@ sealed class Scene
         bool evening = dayPhase.HasValue ? dayPhase.Value >= 0.5f : sun.NightPhase(minute) < 0.5f;
         float clear = 1 - w.Overcast;  // how much of the sky shows
 
-        // The view faces the equator and spans 180° from east to west, so the
-        // sun rises on the left north of the equator and on the right south
-        // of it. Altitude climbs at the same scale.
-        float ppd = W / 180;  // pixels per degree
+        // The view faces the equator and spans 240°, from east-northeast to
+        // west-northwest north of the equator (mirrored south of it, where the
+        // sun rises on the right), so a rising or setting moon is mostly in
+        // view. Altitude climbs at the same scale; on tall screens the top
+        // edge passes the zenith, and the sky carries on over it.
+        float ppd = W / 240;  // pixels per degree
         float viewAz = sky.Latitude >= 0 ? 180 : 0, side = sky.Latitude >= 0 ? 1 : -1;
         float w2 = W / 2, horizon = horizonY;
         Func<Vec3, ScreenPoint> screen = v =>
@@ -518,6 +520,12 @@ sealed class Scene
             float daz = (float)(Math.Atan2(v.X, v.Y) * 180 / Math.PI) - viewAz;
             if (daz > 180) daz -= 360; else if (daz <= -180) daz += 360;
             return new ScreenPoint { X = w2 + daz * ppd, Y = horizon - a * ppd, Alt = a };
+        };
+        // The same direction past the zenith; its Y is above the top edge when it doesn't show.
+        Func<ScreenPoint, ScreenPoint> overZenith = sp =>
+        {
+            float daz = (sp.X - w2) / ppd;
+            return new ScreenPoint { X = w2 + (daz > 0 ? daz - 180 : daz + 180) * ppd, Y = horizon - (180 - sp.Alt) * ppd, Alt = sp.Alt };
         };
 
         // The moon's light turns the night sky blue and brings the snow out.
@@ -611,9 +619,12 @@ sealed class Scene
             ScreenPoint sp = screen(v);
             float m = magnitude + 0.25f * (NightSky.Airmass(sp.Alt) - 1);  // extinction: 0.25 magnitudes per airmass
             float seen = Col.Smoothstep(limit + 0.5f, limit - 0.5f, m) * clear * contrast;
-            if (!(seen > 0) || !(sp.X > -8) || !(sp.X < W + 8) || !(sp.Y > -8)) return;
-            float b = Col.Pow(10, -0.22f * (m - 1.5f));  // brightness, compressed as the eye does
-            splat(sp.X, sp.Y, Math.Min(0.32f * b, 0.9f) * seen, Math.Max((0.5f + 0.28f * Col.Sqrt(Math.Min(b, 9))) * scale, 0.6f), bv);
+            if (!(seen > 0)) return;
+            float b = Col.Pow(10, -0.2f * (m - 1.5f));  // brightness, compressed as the eye does
+            float peak = Math.Min(0.55f * b, 1) * seen, sigma = Math.Max((0.6f + 0.35f * Col.Sqrt(Math.Min(b, 9))) * scale, 0.8f);
+            if (sp.X > -8 && sp.X < W + 8 && sp.Y > -8) splat(sp.X, sp.Y, peak, sigma, bv);
+            ScreenPoint oz = overZenith(sp);
+            if (oz.Y > -8 && oz.X > -8 && oz.X < W + 8) splat(oz.X, oz.Y, peak, sigma, bv);
         };
         if (limit > -1.6f) foreach (Star star in Star.Catalog) point(sky.FromJ2000.Apply(star.Direction), star.Magnitude, star.Bv);
         foreach (Planet planet in sky.Planets) point(planet.Direction, (float)planet.Magnitude, (float)planet.Bv);
@@ -633,8 +644,10 @@ sealed class Scene
                 Vec3 v = sky.FromJ2000.Apply(g.Direction);
                 if (v.Z <= 0) continue;
                 ScreenPoint sp = screen(v);
-                if (!(sp.X > -2) || !(sp.X < W + 2) || !(sp.Y > -2)) continue;
-                splat(sp.X, sp.Y, 0.12f * g.Light * mwSeen * Col.Pow(10, -0.1f * (NightSky.Airmass(sp.Alt) - 1)), Math.Max(0.5f * scale, 0.6f), g.Bv);
+                float peak = 0.12f * g.Light * mwSeen * Col.Pow(10, -0.1f * (NightSky.Airmass(sp.Alt) - 1)), sigma = Math.Max(0.5f * scale, 0.6f);
+                if (sp.X > -2 && sp.X < W + 2 && sp.Y > -2) splat(sp.X, sp.Y, peak, sigma, g.Bv);
+                ScreenPoint oz = overZenith(sp);
+                if (oz.Y > -2 && oz.X > -2 && oz.X < W + 2) splat(oz.X, oz.Y, peak, sigma, g.Bv);
             }
         }
         const int gs = 4;
@@ -652,7 +665,9 @@ sealed class Scene
                 {
                     float a = (horizon - j * gs) / ppd;
                     if (!(a > -1)) continue;
-                    double al = Math.Min(a, 90) * Math.PI / 180, az = (viewAz + (i * gs - w2) / ppd) * Math.PI / 180;
+                    bool past = a > 90;  // over the zenith: the sky behind, upside down
+                    double al = (past ? 180 - a : a) * Math.PI / 180;
+                    double az = (viewAz + (i * gs - w2) / ppd + (past ? 180 : 0)) * Math.PI / 180;
                     var v = new Vec3(Math.Cos(al) * Math.Sin(az), Math.Cos(al) * Math.Cos(az), Math.Sin(al));
                     float fade = Col.Pow(10, -0.1f * (NightSky.Airmass(a) - 1));
                     var c = new RGB(0, 0, 0);
@@ -691,19 +706,100 @@ sealed class Scene
         };
         RGB fogColor = Col.MixOklab(pal.Horizon, Col.Desaturate(pal.Mid, 0.6f), 0.4f);
 
-        // The sea of clouds, seen from above, just below the far ranges. Its
-        // top is rounded humps with creases between (|noise|, as cumulus tops
-        // go); inside, billows shrink toward the horizon, each lit on top and
-        // shaded beneath; a faint haze of light hangs over it.
+        // Overcast: the view from above it, a sea of clouds over the world
+        // below, the ranges and the sky above it clear. It's a surface seen in
+        // perspective, column by column, the near parts hiding the far: lumpy
+        // billows (|noise|, with creases between, as cumulus tops go) on a slow
+        // swell, a few domes rising higher, all lit from the sun's side, or the
+        // moon's at night. Far off, the lumps grow too small to see and it fades
+        // into haze. Seen from the cabin's hill it's a layer: its lumpy, soft
+        // base hangs at the height of the tall spruces' tops, which fade up into
+        // it; under it, the hills beyond lie in its grey shade.
         RGB seaLit = Col.MixOklab(pal.Horizon, pal.Glow, 0.5f) * 1.3f;
-        RGB seaShade = Col.MixOklab(pal.Mid, pal.Horizon, 0.5f) * 0.8f;
+        RGB seaShade = Col.MixOklab(pal.Mid, pal.Horizon, 0.5f) * 0.75f;
+        RGB seaHazeColor = Col.MixOklab(pal.Horizon, seaLit, 0.4f);
         uint seaSeed = Col.Hash32(seed ^ 0x6a09e667);
-        var seaTop = new float[w.Sea > 0 ? Width : 0];
-        for (int x = 0; x < seaTop.Length; x++)
+        float seaLine = 0.70f * H;                  // where its far edge would meet the eye
+        float seaFocal = 0.6f * H;                  // screen scale, in px per unit at depth 1
+        int seaRow0 = Math.Max((int)(seaLine - 0.12f * H), 0);
+        int seaRows = w.Sea > 0 ? Height - seaRow0 : 0;
+        var seaTopY = new float[w.Sea > 0 ? width : 0];
+        float seaSoft = 0.015f * H;
+        var seaEdge = new float[w.Sea > 0 ? width : 0];  // its base, over the hill
+        for (int x = 0; x < seaEdge.Length; x++)
+            seaEdge[x] = ground[(Layers.Length - 1) * width + x] - 0.06f * H
+                + 0.012f * H * Math.Abs(Col.Fbm(x / H * 9 + drift * 3, 3, seaSeed ^ 0x5bd1e995));
+        var seaLight = new float[width * seaRows];
+        var seaHaze = new float[width * seaRows];
+        var seaCover = new float[width * seaRows];
+        if (seaRows > 0)
         {
-            float u = (x + 0.5f) / H;
-            seaTop[x] = (0.716f - 0.03f * Math.Abs(Col.Fbm(u * 3 + drift, 3, seaSeed))
-                         - 0.008f * Math.Abs(Col.Fbm(u * 11 + drift, 2, seaSeed ^ 0x9e3779b9))) * H;
+            // Light from the sun's side, or the moon's at night; softer by moonlight.
+            bool byMoon = alt < -4;
+            float fromX = byMoon ? Col.Clamp01((moon.X - w2) / w2 + 1) * 2 - 1 : Col.Clamp01((sunX - w2) / w2 + 1) * 2 - 1;
+            float fromUp = byMoon ? Math.Max(moon.Alt, 3) : Math.Max(alt, 3);
+            float sinUp = (float)Math.Sin(fromUp * (float)Math.PI / 180), cosUp = (float)Math.Cos(fromUp * (float)Math.PI / 180);
+            float ln = Col.Sqrt(fromX * cosUp * fromX * cosUp + sinUp * sinUp + 0.36f * cosUp * cosUp);
+            float toLightX = fromX * cosUp / ln, toLightY = sinUp / ln, toLightZ = 0.6f * cosUp / ln;  // z: away from us
+            float seaContrast = byMoon ? 0.3f + 0.5f * moonLight : 1;
+            Func<float, float, float> surface = (su, sz) =>
+            {
+                float swell = 0.25f * Col.Fbm2(su * 0.08f, sz * 0.08f, 2, seaSeed ^ 0x27d4eb2f);
+                float dome = 1.8f * Math.Max(Col.Fbm2(su * 0.15f, sz * 0.15f, 2, seaSeed ^ 0x165667b1) - 0.2f, 0);
+                float billow = 0, amp = 0.5f, f = 1.2f;
+                for (int k = 0; k < 4; k++)
+                {
+                    billow += amp * Math.Abs(Col.ValueNoise2(su * f + k * 17.31f, sz * f + k * 9.77f, unchecked(seaSeed + (uint)k * 1013)));
+                    amp *= 0.5f;
+                    f *= 2.1f;
+                }
+                return 0.15f + swell + dome + 0.35f * billow * (0.3f + 0.7f * (1 - Col.Smoothstep(8, 40, sz)));
+            };
+            int height = Height;
+            Parallel.For(0, width, x =>
+            {
+                float across = x + 0.5f - w2;
+                int filled = height;  // rows from here down are drawn
+                float crest = H;      // the surface's highest point so far
+                float lastY = H * 2, lastLit = 0.5f, lastHaze = 0;  // the step before, nearer
+                for (float z = 1.5f; z < 80; z *= 1.008f)
+                {
+                    float u = across * z / seaFocal + drift * 3;
+                    float s = surface(u, z);
+                    float y = seaLine + seaFocal * (1 - s) / z;  // the eye stands one unit above the mean surface
+                    int row = Math.Max((int)Math.Ceiling(y - 0.5f), seaRow0);
+                    float e = 0.02f * z;
+                    float dx = (surface(u + e, z) - s) / e, dz = (surface(u, z + e) - s) / e;
+                    float nl = Col.Sqrt(dx * dx + 1 + dz * dz);
+                    float lambert = Math.Max((-dx * toLightX + toLightY - dz * toLightZ) / nl, 0);
+                    float lit = Col.Clamp01(0.5f + seaContrast * (0.65f * lambert - 0.3f) + 0.15f * s);
+                    float haze = Col.Smoothstep(4, 45, z);
+                    if (row < filled)
+                    {
+                        // Rows between this step and the one before blend the two, so steps don't show.
+                        for (int r = row; r < filled; r++)
+                        {
+                            float t = lastY > y ? Col.Clamp01((r + 0.5f - y) / (lastY - y)) : 0;
+                            int i = (r - seaRow0) * width + x;
+                            seaLight[i] = Col.Lerp(lit, lastLit, t);
+                            seaHaze[i] = Col.Lerp(haze, lastHaze, t);
+                            seaCover[i] = 1;
+                        }
+                        filled = row;
+                        crest = y;
+                    }
+                    lastY = y; lastLit = lit; lastHaze = haze;
+                }
+                // The top edge, antialiased: the row above the last drawn gets the fraction it's covered.
+                if (filled > seaRow0 && filled < height)
+                {
+                    int i = (filled - seaRow0) * width + x, above = i - width;
+                    seaLight[above] = seaLight[i];
+                    seaHaze[above] = seaHaze[i];
+                    seaCover[above] = Col.Clamp01(filled - crest);
+                }
+                seaTopY[x] = crest;
+            });
         }
         // Fog lakes at the feet of the hills, bright under a clear sky.
         RGB valleyColor = Col.MixOklab(pal.Horizon, pal.Mid, 0.2f) * 1.12f;
@@ -831,25 +927,6 @@ sealed class Scene
                         if (bd < bowR - bw) c = c * (1 + 0.18f * bowGain);
                         else if (bd > bowR + bw && bd < r2 - bw2) c = c * (1 - 0.2f * bowGain);
                     }
-                    if (l == Layers.Length - 1 && w.Sea > 0)
-                    {
-                        // The sea of clouds, over everything but the cabin's hill.
-                        float above = seaTop[x] - fy;
-                        if (above > 0) c = c + seaLit * (0.08f * w.Sea * Col.Exp(-above / (0.012f * H)));
-                        float seaCov = Col.Clamp01(-above / 4 + 0.5f) * w.Sea;
-                        if (seaCov > 0)
-                        {
-                            float depth = Col.Clamp01(-above / (0.28f * H));
-                            float k = 1.8f - depth;  // billows grow toward the viewer
-                            float u = fx / H * 6 * k + drift, v = fy / H * 13 * k;
-                            float n = Col.Fbm2(u, v, 3, seaSeed);
-                            float up = Col.Fbm2(u, v - 0.18f, 3, seaSeed);
-                            float puff = Col.Smoothstep(-0.25f, 0.3f, n);       // lumps, with creases between
-                            float lit = Col.Clamp01(0.5f + 2.2f * (n - up));    // thinner above: a lit top
-                            float light = Col.Clamp01(0.98f - 0.45f * depth) * (0.45f + 0.3f * puff + 0.3f * lit);
-                            c = Col.Mix(c, Col.Mix(seaShade, seaLit, light) + pal.Glow * (g * 0.7f), seaCov);
-                        }
-                    }
                     int t0 = (l * width + x) * Sub;
                     float land = 0;
                     for (int s = 0; s < Sub; s++) land += Col.Clamp01(fy - top[t0 + s] + 0.5f);
@@ -891,8 +968,33 @@ sealed class Scene
                         tone = Col.Mix(tone, valleyColor, w.Valley * lake * (1 - 0.5f * tree));
                     }
                     tone = tone + pal.Glow * (g * layer.Haze * 0.8f);  // in-scattered sun
+                    if (seaRows > 0 && l >= 2)
+                    {
+                        if (l < Layers.Length - 1)
+                            tone = Col.Mix(tone, seaShade * 0.6f, 0.3f * w.Sea);  // the hills beyond, in the clouds' shade
+                        else if (fy < gy)
+                            // Treetops fade up into the clouds' base.
+                            tone = Col.Mix(tone, seaHazeColor, 0.6f * w.Sea * Col.Smoothstep(seaEdge[x] + 0.035f * H, seaEdge[x], fy));
+                    }
                     c = cov == 1 ? tone : Col.Mix(c, tone, cov);
                     frontTree = frontTree * (1 - cov) + tree;
+                }
+                if (seaRows > 0)
+                {
+                    // A faint haze of light over the sea's top.
+                    float above = seaTopY[x] - fy;
+                    if (above > 0) c = c + seaLit * (0.06f * w.Sea * Col.Exp(-above / (0.012f * H)));
+                }
+                if (seaRows > 0 && y >= seaRow0 && fy < seaEdge[x] + seaSoft)
+                {
+                    // The sea of clouds, down to its soft base, which wraps the treetops.
+                    int fsi = (y - seaRow0) * width + x;
+                    float frontCov = seaCover[fsi] * w.Sea * Col.Smoothstep(seaEdge[x] + seaSoft, seaEdge[x] - 0.5f * seaSoft, fy);
+                    if (frontCov > 0)
+                    {
+                        RGB frontTone = Col.MixOklab(Col.Mix(seaShade, seaLit, seaLight[fsi]), seaHazeColor, seaHaze[fsi]);
+                        c = Col.Mix(c, frontTone + pal.Glow * (g * 0.7f), frontCov);
+                    }
                 }
 
                 if (glintGain > 0)

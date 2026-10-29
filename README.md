@@ -125,18 +125,19 @@ hour each frame shows:
   around them, so the shapes are a model, not a photograph. Also the
   zodiacal light, the faint cone of sunlit dust along the planets' path.
 
-The view faces the equator: north of it, the left edge is due east and the
-right edge due west. The moon is drawn about five times its real size, the
-way it looks to us, and up to two-thirds bigger still near the horizon,
-where it seems bigger to us too. Without a location, the sky is drawn for 45° north at
-your time zone's longitude.
+The view faces the equator and spans 240°: north of it, from east-northeast
+on the left to west-northwest on the right, so a rising or setting moon is
+mostly in view. The moon is drawn about five times its real size, the way
+it looks to us, and up to two-thirds bigger still near the horizon, where it
+seems bigger to us too. Without a location, the sky is drawn for 45° north
+at your time zone's longitude.
 
 ## Weather and privacy
 
 Grey weather isn't mirrored back at you; the sky shows what's beyond it:
-- **Overcast:** the view from above the deck, a sunlit sea of clouds with the
-  summit and far ridges breaking through, and sun, moon and stars clear
-  overhead.
+- **Overcast:** you're above it. A sunlit sea of clouds covers the world
+  below, its base at the tops of the tall spruces by the cabin, the summit
+  and far ridges rising out of it, and sun, moon and stars clear overhead.
 - **Fog:** fog lakes lie low in the far valleys under a clear sky.
 - **Rain:** the moment after. A rainbow stands opposite the sun while it's
   low (from this view, at the far edge, with its faint second bow), in the

@@ -27,7 +27,7 @@ static class NightSky
         while (i < starBv.Length - 2 && b > starBv[i + 1]) i++;
         RGB c = Col.MixOklab(RGB.Hex(starHex[i]), RGB.Hex(starHex[i + 1]), (b - starBv[i]) / (starBv[i + 1] - starBv[i]));
         float y = 0.2126f * c.R + 0.7152f * c.G + 0.0722f * c.B;
-        RGB vivid = Col.Mix(new RGB(y, y, y), c, 1.6f);
+        RGB vivid = Col.Mix(new RGB(y, y, y), c, 1.3f);
         return new RGB(Math.Max(vivid.R, 0), Math.Max(vivid.G, 0), Math.Max(vivid.B, 0)) * (1 / y);
     }
 

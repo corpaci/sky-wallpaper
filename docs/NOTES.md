@@ -50,9 +50,16 @@ minute. The manifest header says when that happens (polar night or day).
 **Weather.** Each sky (clear, cloudy, overcast, rain, snow, fog) maps to knobs
 in `Weather`: clouds, overcast, sea, valley, wet, snow and fog. Grey weather
 isn't mirrored:
-- **Overcast** draws a sea of clouds just below the far ranges, behind the
-  cabin's hill. Its top is |noise| humps; its billows shrink toward the
-  horizon and are lit where the noise thins upward.
+- **Overcast** is a sea of clouds seen from above, its surface rendered in
+  perspective column by column, near billows hiding far ones:
+  - the billows are |noise| lumps with creases between, on a slow swell,
+    with a few domes rising through the far edge;
+  - each is lit from the sun's side (the moon's at night), and shading is
+    blended between depth steps so they don't show;
+  - far off, the lumps flatten and fade into haze;
+  - its soft, lumpy base hangs at the height of the tall spruces' tops, which
+    fade up into it; under it the hills beyond lie in grey shade, while the
+    cabin's hill stays in clear light.
 - **Fog** sinks each hill's foot into bright fog lakes, least in front.
 - **Rain** is the moment after:
   - a primary and secondary bow (reversed colors, Alexander's dark band, a
@@ -70,10 +77,13 @@ for the frame's moment and place:
   Schlyter's orbital elements with the main perturbations, about an
   arcminute; the moon seen from the observer (parallax up to 1°); stars
   precessed from J2000.
-- **View:** it faces the equator and spans 180° of azimuth across the width,
-  so the left edge is due east north of the equator (the sun's side flips
-  south of it), with altitude at the same scale up from 64% of the height.
-  At 3420 px wide that's 19 px per degree.
+- **View:** it faces the equator and spans 240° of azimuth across the width,
+  east-northeast to west-northwest north of the equator (the sun's side
+  flips south of it), with altitude at the same scale up from 64% of the
+  height. At 3420 px wide that's 14.25 px per degree, and on a 3:2 screen
+  the top edge is 10° past the zenith: the sky carries on over it, upside
+  down, as a wide panorama does (stars near the zenith can show twice
+  there; the moon isn't drawn past it).
 - **The moon** is a sphere lit from the real sun's direction, flat to its
   rim as the real moon is (Lommel–Seeliger), drawn about five times its real
   size, and up to 67% wider again near the horizon, back to normal by 30°
@@ -181,8 +191,8 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
   | | Frames | Render CPU | HEIC |
   |---|---|---|---|
   | Before, any day | 14 | 15 s | 16.6 MB |
-  | 14 July | 17 | 20 s | 20.4 MB |
-  | 29 October | 19 | 23 s | 23.2 MB |
+  | 14 July | 17 | 21 s | 20.3 MB |
+  | 29 October | 19 | 24 s | 23.2 MB |
 
   The extra frames are the night's. A night frame takes about 1.3 MB,
   mostly the dither.

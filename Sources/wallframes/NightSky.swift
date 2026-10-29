@@ -24,7 +24,7 @@ func starColor(_ bv: Float) -> RGB {
     let (s0, s1) = (starStops[i], starStops[i + 1])
     let c = mixOklab(RGB(hex: s0.hex), RGB(hex: s1.hex), (b - s0.bv) / (s1.bv - s0.bv))
     let y = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
-    let vivid = mix(RGB(y, y, y), c, 1.6)
+    let vivid = mix(RGB(y, y, y), c, 1.3)
     return RGB(max(vivid.r, 0), max(vivid.g, 0), max(vivid.b, 0)) * (1 / y)
 }
 
