@@ -63,20 +63,38 @@ Screen Saver when inactive → Never. That's also the cheapest choice.
 Needs Windows 10 or 11, nothing else: the installer compiles its helper with
 the C# compiler built into Windows. No admin rights.
 
-Clone the repo (or download the ZIP and unpack it). Then, in PowerShell in
-the repo folder:
+**Easiest:** open PowerShell (Start → type "PowerShell") and paste:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File windows\install.ps1 -Latitude 48.2 -Longitude 16.4
+irm https://raw.githubusercontent.com/corpaci/sky-wallpaper/main/windows/get.ps1 | iex
 ```
 
-- `-NoWeather` keeps it offline. Without a location, it uses fixed
-  `-Sunrise 07:20 -Sunset 17:55` instead.
+It downloads this project, asks for your town, and sets everything up in
+about a minute. Press Enter at the town question to use fixed times instead.
+[`get.ps1`](windows/get.ps1) is a short script you can read first.
+
+**Or with the ZIP:** on GitHub, Code → Download ZIP. Unpack it and
+double-click `windows\Install.cmd`. If Windows says it protected your PC,
+choose More info → Run anyway.
+
+**To remove it** and get your old wallpaper back, double-click
+`windows\Uninstall.cmd`, or paste:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\SkyWallpaper\uninstall.ps1"
+```
+
+Run the installer again to change town or settings. To skip the questions,
+pass them yourself:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File windows\install.ps1 -Latitude 48.2 -Longitude 16.4 -NoWeather
+```
+
 - Everything lives in `%LOCALAPPDATA%\SkyWallpaper`, plus one scheduled task,
   `SkyWallpaper`. The task switches frames, renders the new day at 00:05,
   and catches up at logon, unlock and wake.
-- `windows\uninstall.ps1` removes it all and puts your previous wallpaper
-  back.
+- Without a location, it uses fixed `-Sunrise 07:20 -Sunset 17:55`.
 
 If the frame looks stale:
 
@@ -91,7 +109,8 @@ Get-Content "$env:LOCALAPPDATA\SkyWallpaper\sky.log" -Tail 20
 
 Weather comes from [Open-Meteo](https://open-meteo.com): free, no account,
 no key. Once a day, one request carries the date and your coordinates
-rounded to 0.1° (about 10 km). Nothing else leaves the machine. The response
+rounded to 0.1° (about 10 km). On Windows, the town you type at install is
+looked up once on Open-Meteo too. Nothing else leaves the machine. The response
 is kept beside the frames as `forecast.json`. Each frame takes its hour's
 sky, and an extra frame goes on every hour where the sky changes. If the
 forecast can't be fetched, the day renders without weather.
@@ -100,7 +119,7 @@ forecast can't be fetched, the day renders without weather.
 
 | What | macOS daily | macOS static | Windows | Default |
 |---|---|---|---|---|
-| Location | `--lat`, `--lon` | — | `-Latitude`, `-Longitude` | time zone's city (macOS) |
+| Location | `--lat`, `--lon` | — | `-Latitude`, `-Longitude` | macOS: time zone's city; Windows: asks for your town |
 | Weather off | `--no-weather` | always off | `-NoWeather` | on, when located |
 | Fixed sunrise, sunset | — | `SUNRISE`, `SUNSET` | `-Sunrise`, `-Sunset` | `07:20`, `17:55` |
 | Landscape (another seed, other mountains) | `--seed` | `SEED` | `-Seed` | `7` |
@@ -149,8 +168,10 @@ tests/daylight.sh     # sunrise and sunset against published times
   the author's Mac, and the wallpaper stays dynamic. Still open: whether
   macOS ever trims its own copies of past days' wallpapers, and the first
   00:05 run.
-- **Windows:** the earlier version runs on a real PC. The daily `tick`
-  (rendering, re-registering the task, weather) compiles and its task XML
-  validates, but it hasn't run on Windows yet.
+- **Windows:** the earlier version runs on a real PC. These haven't run on
+  Windows yet:
+  - the daily `tick` (rendering, re-registering the task, weather), though
+    it compiles and its task XML validates;
+  - the one-line and double-click installers.
 
 Details and measurements: [docs/NOTES.md](docs/NOTES.md).

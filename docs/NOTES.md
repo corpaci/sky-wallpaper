@@ -144,6 +144,14 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
   - The agent loads as a background-type job with the 00:05 calendar trigger.
     The first run rendered and set both screens (19 frames each, from the
     Vienna forecast). The run-at-load skipped correctly.
+  - **First scheduled run (2026-10-29).** It started at 00:12 with the lid
+    closed, so `--screens` listed only the external 1920×1080; the file was
+    written at 02:08, the Mac apparently sleeping in between. In the morning
+    the follower put that 16:9 file on the 3:2 built-in screen.
+    - Fixed: daily.sh remembers every size seen (`screens`) and renders each
+      size missing for today.
+    - Fixed: the follower adds unknown sizes and starts the daily job.
+    - Re-rendered: both screens show their own sizes.
   - **It stays dynamic.** `NSWorkspace.setDesktopImageURL` writes the same
     `{type: imageFile, url}` entry that System Settings wrote, with no separate
     "dynamic" flag, so the behavior comes from the file either way.
@@ -177,7 +185,9 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
   render's HEICs per day: about 27 MB on this Mac (3420×2224 plus 1920×1080).
   To watch it:
   `ls ~/Library/Containers/com.apple.wallpaper.extension.image/Data/Library/Caches/*.heic | wc -l`.
-- **macOS first 00:05 run.** The scheduled trigger hasn't fired yet.
+- **macOS screen sizes over time.** The sizes-seen list only grows. A size
+  that never comes back, for example after changing display scaling, keeps
+  being rendered daily until it's removed from `screens`.
 - **Windows `tick`.** It has never run on Windows:
   - `schtasks /XML` accepting this XML;
   - re-registering the task from inside its own run;
@@ -188,3 +198,9 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
   catch-up triggers are meant to fix that, but haven't been confirmed.
 - **Windows scaled displays.** Whether monitor sizes come back in physical
   pixels is untested (`sky monitors` prints what it sees).
+- **Windows installers.** None has run on Windows: `get.ps1` (download and
+  install), `Install.cmd` / `Uninstall.cmd` (double-click), and the town
+  question in install.ps1. Checked from here: Open-Meteo's place search
+  returns name, region, country and coordinates; the GitHub ZIP unpacks to
+  `sky-wallpaper-main\windows\install.ps1`; the scripts are ASCII; the
+  `.cmd` files have CRLF line ends (kept by `.gitattributes`).
