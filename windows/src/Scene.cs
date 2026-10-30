@@ -532,9 +532,14 @@ sealed class Scene
         // The moon's light turns the night sky blue and brings the snow out.
         ScreenPoint moon = screen(sky.Moon);
         float moonLit = (float)sky.MoonLit;
+        // Only while it's in the picture does it dim the faint stars and the
+        // Milky Way; out of it, the night stays full of stars and the land
+        // keeps a little of its light.
         float moonLight = Col.Pow(moonLit, 1.5f) * Col.Smoothstep(-1, 20, moon.Alt) * Col.Smoothstep(-5, -14, alt) * clear;
+        float inView = Col.Smoothstep(-8 * ppd, 0, moon.X) * Col.Smoothstep(W + 8 * ppd, W, moon.X) * Col.Smoothstep(-1, 2, moon.Alt);
+        float moonShown = moonLight * inView;
         Palette pal = Palettes.At(alt, evening);
-        if (moonLight > 0) pal = pal.Moonlit(moonLight);
+        if (moonLight > 0) pal = pal.Moonlit(moonLight * (0.35f + 0.65f * inView));
         if (w.Overcast > 0) pal = pal.Overcast(w.Overcast);
         float span = horizonY - 0.14f * H;
 
@@ -581,7 +586,7 @@ sealed class Scene
 
         // Stars and planets: as many as the dark, the moon and the air let
         // through. About magnitude 6 at full night; by day, only Venus, faint.
-        float limit = -3.5f + 9.5f * Col.Clamp01(-alt / 16) - 1.6f * moonLight;
+        float limit = -3.5f + 9.5f * Col.Clamp01(-alt / 16) - 1.6f * moonShown;
         float contrast = 0.25f + 0.75f * Col.Smoothstep(-2, -8, alt);
         int skyRows = Math.Min(Height, (int)horizonY + 2), width = Width;
         var starPower = new float[width * skyRows];
@@ -634,9 +639,9 @@ sealed class Scene
 
         // The Milky Way and the zodiacal light, on a grid of sky directions
         // every 4 px (both are smooth at that scale), bilinear in between.
-        float mwSeen = Col.Smoothstep(-11, -18, alt) * (1 - 0.85f * moonLight) * clear;
+        float mwSeen = Col.Smoothstep(-11, -18, alt) * (1 - 0.85f * moonShown) * clear;
         float mwGain = 0.022f * mwSeen;
-        float zlGain = 0.006f * Col.Smoothstep(-13, -19, alt) * (1 - 0.9f * moonLight) * clear;
+        float zlGain = 0.006f * Col.Smoothstep(-13, -19, alt) * (1 - 0.9f * moonShown) * clear;
         // Its grain: stars too faint to see one by one, crowding the band.
         if (mwSeen > 0)
         {

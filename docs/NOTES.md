@@ -95,8 +95,10 @@ for the frame's moment and place:
   size, and up to 67% wider again near the horizon, back to normal by 30°
   (the moon illusion). Its maria are hand-placed patches; their north follows the ecliptic
   pole, within 1.5° of the moon's axis. Earthshine on the dark side is
-  strongest in a thin crescent. Its light adds blue to the night palette, dims
-  the faint stars and washes out the Milky Way. By day it's drawn pale.
+  strongest in a thin crescent. Its light adds blue to the night palette, and
+  while it's in the picture it dims the faint stars and washes out the Milky
+  Way; out of it, the night stays starry and only a little of its light
+  reaches the land. By day it's drawn pale.
 - **Stars:** the 2,847 stars brighter than magnitude 5.5 from the Yale Bright
   Star Catalogue, colored by B−V (a little more saturated than the eye
   sees). The planets go through the same code with their magnitudes and

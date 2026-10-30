@@ -361,9 +361,14 @@ struct Scene {
 
         // The moon's light turns the night sky blue and brings the snow out.
         let moon = screen(sky.moon), moonLit = Float(sky.moonLit)
+        // Only while it's in the picture does it dim the faint stars and the
+        // Milky Way; out of it, the night stays full of stars and the land
+        // keeps a little of its light.
         let moonLight = powf(moonLit, 1.5) * smoothstep(-1, 20, moon.alt) * smoothstep(-5, -14, alt) * clear
+        let inView = smoothstep(-8 * ppd, 0, moon.x) * smoothstep(W + 8 * ppd, W, moon.x) * smoothstep(-1, 2, moon.alt)
+        let moonShown = moonLight * inView
         var pal = palette(alt: alt, evening: evening)
-        if moonLight > 0 { pal = pal.moonlit(moonLight) }
+        if moonLight > 0 { pal = pal.moonlit(moonLight * (0.35 + 0.65 * inView)) }
         if w.overcast > 0 { pal = pal.overcast(w.overcast) }
         let span = horizonY - 0.14 * H
 
@@ -407,7 +412,7 @@ struct Scene {
 
         // Stars and planets: as many as the dark, the moon and the air let
         // through. About magnitude 6 at full night; by day, only Venus, faint.
-        let limit = -3.5 + 9.5 * clamp01(-alt / 16) - 1.6 * moonLight
+        let limit = -3.5 + 9.5 * clamp01(-alt / 16) - 1.6 * moonShown
         let contrast = 0.25 + 0.75 * smoothstep(-2, -8, alt)
         let skyRows = min(height, Int(horizonY) + 2)
         var starPower = [Float](repeating: 0, count: width * skyRows)
@@ -455,9 +460,9 @@ struct Scene {
 
         // The Milky Way and the zodiacal light, on a grid of sky directions
         // every 4 px (both are smooth at that scale), bilinear in between.
-        let mwSeen = smoothstep(-11, -18, alt) * (1 - 0.85 * moonLight) * clear
+        let mwSeen = smoothstep(-11, -18, alt) * (1 - 0.85 * moonShown) * clear
         let mwGain = 0.022 * mwSeen
-        let zlGain = 0.006 * smoothstep(-13, -19, alt) * (1 - 0.9 * moonLight) * clear
+        let zlGain = 0.006 * smoothstep(-13, -19, alt) * (1 - 0.9 * moonShown) * clear
         // Its grain: stars too faint to see one by one, crowding the band.
         if mwSeen > 0 {
             for g in Star.grain {
