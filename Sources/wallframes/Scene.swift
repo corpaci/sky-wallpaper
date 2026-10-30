@@ -651,8 +651,9 @@ struct Scene {
         // moon's at night. Far off, the lumps grow too small to see and it fades
         // into haze. Cloudy days break it open: through wide gaps the world
         // below shows. Seen from the cabin's hill it's a layer: its lumpy, soft
-        // base hangs at the height of the tall spruces' tops, which fade up into
-        // it; under it, the hills beyond lie in its grey shade.
+        // base hangs just above the leafy crowns, so only the tall spruces' tops
+        // fade up into it, and frays into tongues over the hills beyond, which
+        // lie in its grey shade; the cabin's hill takes its soft light.
         let seaLit = mixOklab(pal.horizon, pal.glow, 0.5) * 1.3
         let seaShade = mixOklab(pal.mid, pal.horizon, 0.5) * 0.75
         let seaHazeColor = mixOklab(pal.horizon, seaLit, 0.4)
@@ -671,10 +672,18 @@ struct Scene {
             let open = -0.45 + 0.9 * w.broken  // the noise below this is a gap
             return smoothstep(open - 0.06, open + 0.06, fbm2(u * 0.12, z * 0.12, octaves: 3, seed: seaSeed ^ 0x85ebca6b))
         }
-        let seaEdge: [Float] = w.sea > 0 ? (0..<width).map { x in  // its base, over the hill
-            ground[(Self.layers.count - 1) * width + x] - 0.06 * h
-                + 0.012 * h * abs(fbm(Float(x) / h * 9 + drift * 3, octaves: 3, seed: seaSeed ^ 0x5bd1e995))
+        let seaEdge: [Float] = w.sea > 0 ? (0..<width).map { x in
+            // Its base, over the hill: lumpy, rising and dipping along it, and
+            // always above the leafy crowns (the tallest reach 0.053 of the
+            // height), so only the tall spruces' tops go up into it.
+            let swell = clamp01(0.5 + 0.6 * fbm(Float(x) / h * 1.6 + drift, octaves: 2, seed: seaSeed ^ 0x1b873593))
+            return ground[(Self.layers.count - 1) * width + x] - (0.07 + 0.028 * swell) * h
+                - 0.012 * h * abs(fbm(Float(x) / h * 9 + drift * 3, octaves: 3, seed: seaSeed ^ 0x5bd1e995))
         } : []
+        let seaBase = w.sea * clamp01(1 - 2 * w.broken)  // how solid its base is: overcast, not broken
+        // The bright sea lights the cabin's hill softly from all round: the
+        // meadow lifts toward the clouds' shaded grey, most at its far edge.
+        let seaLift = 0.3 * w.sea
         var seaLight = [Float](repeating: 0, count: width * seaRows)
         var seaDepth = [Float](repeating: 0, count: width * seaRows)  // how far off, for haze and gaps
         var seaCover = [Float](repeating: 0, count: width * seaRows)
@@ -849,7 +858,7 @@ struct Scene {
         // the trees let them go, browning through winter, until snow covers
         // them or spring's grass grows over them.
         let carpetGain = (season.year > 0.75 ? 1 : 1 - smoothstep(0.18, 0.30, season.year)) * (1 - groundSnow)
-        let carpetBrown = season.year > 0.75 ? 0.6 * smoothstep(0.86, 1, season.year) : 0.6 + 0.3 * smoothstep(0, 0.2, season.year)
+        let carpetBrown = season.year > 0.75 ? 0.3 + 0.3 * smoothstep(0.86, 1, season.year) : 0.6 + 0.3 * smoothstep(0, 0.2, season.year)
         let carpetCell = (0..<layerCount).map { max(Int((0.0016 * H * Self.layers[$0].trees / Self.layers[near].trees).rounded()), 1) }
         let overNear = nearOverlay
 
@@ -932,6 +941,13 @@ struct Scene {
 
                     var frontTree: Float = 0  // how much of this pixel is tree or porch, in front
                     for l in 0..<layerCount {
+                        if l == near && seaBase > 0 && fy > seaEdge[x] && fy < seaEdge[x] + 0.04 * H {
+                            // The base frays: soft tongues of cloud hang lower here and
+                            // there, in front of the hills beyond, behind the cabin's hill.
+                            let n = fbm2(fx / (0.12 * H) + drift * 2, fy / (0.02 * H), octaves: 3, seed: seaSeed ^ 0x9e3779b9)
+                            let reach = 0.04 * H * clamp01(1.6 * n)
+                            if reach > 0 { c = mix(c, seaHazeColor, 0.8 * seaBase * smoothstep(seaEdge[x] + reach, seaEdge[x], fy)) }
+                        }
                         if l == bowLayer && bowGain > 0 {
                             // Rainbow light, added: violet inside, red outside; the
                             // second bow beyond, colors reversed; brighter sky inside
@@ -966,6 +982,9 @@ struct Scene {
                         let layer = Self.layers[l]
                         let gy = ground[l * width + x]
                         var tone = mix(tones[l], fog, layer.mist * smoothstep(0, mistDepth, fy - gy))
+                        if l == near && seaLift > 0 && tree < 1 && fy >= gy {
+                            tone = mixOklab(tone, seaShade, seaLift * (0.8 + 0.2 * smoothstep(gy + 0.1 * H, gy, fy)) * (1 - tree))
+                        }
                         if tree > 0 { tone = tone * (1 - 0.18 * (1 - layer.haze) * tree) }  // spruce darker than meadow
                         if birch && spruceCov > 0 {
                             // Birch bark: paper white, lit on its left, with dark lenticels across it.
@@ -987,29 +1006,54 @@ struct Scene {
                             // Fallen leaves: a flat, ragged pool around each trunk,
                             // a leaf to each small cell, the floor tinted between;
                             // on the near meadow a few blown far out from it.
-                            var amount: Float = 0, species = 0
+                            var (amount, pool, species): (Float, Float, Int) = (0, 0, 0)  // pool: under a crown, not blown out
                             let ragged = 0.75 + 0.5 * valueNoise2(fx / (0.01 * H), fy / (0.004 * H), 0x4b1d)
                             for k in 0..<4 {
                                 let i = Int(litterBy[(l * width + x) * 4 + k])
                                 guard i >= 0 else { continue }
                                 let t = leafy[i]
                                 let gone = (season.year > 0.75 ? leafFall(season, species: t.species) : 1) * carpetGain
-                                let (u, v) = ((fx - t.x) / (1.5 * t.rx * ragged), (fy - t.base) / ((l == near ? 0.3 : 0.15) * t.rx * ragged))
+                                let (u, v) = ((fx - t.x) / (1.5 * t.rx * ragged), (fy - t.base) / ((l == near ? 0.4 : 0.15) * t.rx * ragged))
                                 var a = gone * expf(-(u * u + v * v))
+                                pool = max(pool, a)
                                 if l == near && fy > t.base {
-                                    a = max(a, 0.18 * gone * expf(-abs(u) / 3 - (fy - t.base) / (0.06 * H))
+                                    a = max(a, 0.15 * gone * expf(-abs(u) / 3 - (fy - t.base) / (0.05 * H))
                                         * smoothstep(5.5, 3.5, abs(fx - t.x) / t.rx))
                                 }
                                 if a > amount { (amount, species) = (a, t.species) }
                             }
                             if amount > 0.01 {
-                                let cs = carpetCell[l]
-                                let h1 = hash32(UInt32(x / cs) &* 0x9e3779b1 ^ UInt32(y * 5 / (3 * cs)) &* 0x85ebca6b ^ 0x1ea7)
+                                // Leaves lie in the light the ground has: a little brighter
+                                // than it, in their own colors. Under the tree they tint the
+                                // floor between them; on the near meadow they're cells seen
+                                // in perspective, bigger and rounder nearer.
+                                let cs = Float(carpetCell[l])
+                                var (cu, cv, px) = (fx / cs, fy / (0.6 * cs), 1 / cs)
+                                if l == near {
+                                    let (d0, d) = (gy - horizonY, fy - horizonY)
+                                    (cu, cv, px) = ((fx - w2) * d0 / (d * cs), d0 * d0 / (0.6 * cs * d), d0 / (d * cs))
+                                }
+                                let (iu, iv) = (floorf(cu), floorf(cv))
+                                let h1 = hash32(UInt32(bitPattern: Int32(iu)) &* 0x9e3779b1 ^ UInt32(bitPattern: Int32(iv)) &* 0x85ebca6b ^ 0x1ea7)
                                 let path = leafPaths[species]
-                                var leaf = mixOklab(RGB(hex: path[path.count - 1 - Int(h1 >> 8) % 2]), RGB(hex: 0x6a4a32), carpetBrown)
-                                leaf = leaf * (0.8 + 0.4 * unit(h1 >> 3))
-                                let k = unit(h1) < amount * 1.3 ? 1 : 0.5 * amount * amount
-                                tone = mix(tone, inLayer(leaf, l, tone), k * (1 - tree))
+                                let fresh = RGB(hex: path[path.count - 1 - Int(h1 >> 8) % 2])
+                                // A few leaves from a whole crown already cover a lot of floor;
+                                // fresh ones are brighter and more colorful than the matted
+                                // brown of winter.
+                                let freshness = 1 - carpetBrown
+                                let floor = tone, floorLum = max(luminance(tone), 1e-5)
+                                func onGround(_ c: RGB, _ k: Float) -> RGB {
+                                    mixOklab(floor, c * min(k * floorLum / max(luminance(c), 1e-5), lightLevel), 0.55 + 0.35 * freshness)
+                                }
+                                let wash = onGround(mixOklab(RGB(hex: path[path.count - 2]), RGB(hex: 0x6a4a32), max(carpetBrown, 0.4)), 1.2 + 0.7 * freshness)
+                                tone = mix(tone, wash, 0.7 * (1 - expf(-4 * pool)) * (1 - tree))
+                                if unit(h1) < 1 - expf(-4 * amount) {
+                                    let (lu, lv) = (cu - iu - 0.35 - 0.3 * unit(h1 >> 4), cv - iv - 0.35 - 0.3 * unit(h1 >> 12))
+                                    let inside = clamp01((0.34 - (lu * lu + lv * lv).squareRoot()) / px + 0.5)
+                                    let brown = clamp01(carpetBrown + 0.35 * (unit(h1 >> 20) - 0.3))
+                                    let leaf = onGround(mixOklab(fresh, RGB(hex: 0x6a4a32), brown), 1.4 + 1.2 * freshness + (0.6 + 0.6 * freshness) * unit(h1 >> 3))
+                                    tone = mix(tone, leaf, inside * (1 - tree))
+                                }
                             }
                         }
                         if groundSnow > 0 && tree > 0.3 {
@@ -1063,10 +1107,10 @@ struct Scene {
                         tone = tone + pal.glow * (g * layer.haze * 0.8)   // in-scattered sun
                         if seaRows > 0 && l >= 2 {
                             if l < layerCount - 1 {
-                                tone = mix(tone, seaShade * 0.6, 0.3 * w.sea)  // the hills beyond, in the clouds' shade
+                                tone = mix(tone, seaShade * 0.5, 0.45 * w.sea)  // the hills beyond, in the clouds' shade
                             } else if fy < gy {
-                                // Treetops fade up into the clouds' base.
-                                tone = mix(tone, seaHazeColor, 0.6 * w.sea * clamp01(1 - 2 * w.broken) * smoothstep(seaEdge[x] + 0.035 * H, seaEdge[x], fy))
+                                // The tall spruces' tops fade up into the clouds' base.
+                                tone = mix(tone, seaHazeColor, 0.6 * seaBase * smoothstep(seaEdge[x] + 0.015 * H, seaEdge[x], fy))
                             }
                         }
                         c = cov == 1 ? tone : mix(c, tone, cov)

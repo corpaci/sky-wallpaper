@@ -870,8 +870,9 @@ sealed class Scene
         // moon's at night. Far off, the lumps grow too small to see and it fades
         // into haze. Cloudy days break it open: through wide gaps the world
         // below shows. Seen from the cabin's hill it's a layer: its lumpy, soft
-        // base hangs at the height of the tall spruces' tops, which fade up into
-        // it; under it, the hills beyond lie in its grey shade.
+        // base hangs just above the leafy crowns, so only the tall spruces' tops
+        // fade up into it, and frays into tongues over the hills beyond, which
+        // lie in its grey shade; the cabin's hill takes its soft light.
         RGB seaLit = Col.MixOklab(pal.Horizon, pal.Glow, 0.5f) * 1.3f;
         RGB seaShade = Col.MixOklab(pal.Mid, pal.Horizon, 0.5f) * 0.75f;
         RGB seaHazeColor = Col.MixOklab(pal.Horizon, seaLit, 0.4f);
@@ -891,10 +892,20 @@ sealed class Scene
             float open = -0.45f + 0.9f * w.Broken;  // the noise below this is a gap
             return Col.Smoothstep(open - 0.06f, open + 0.06f, Col.Fbm2(su * 0.12f, sz * 0.12f, 3, seaSeed ^ 0x85ebca6b));
         };
-        var seaEdge = new float[w.Sea > 0 ? width : 0];  // its base, over the hill
+        var seaEdge = new float[w.Sea > 0 ? width : 0];
         for (int x = 0; x < seaEdge.Length; x++)
-            seaEdge[x] = ground[(Layers.Length - 1) * width + x] - 0.06f * H
-                + 0.012f * H * Math.Abs(Col.Fbm(x / H * 9 + drift * 3, 3, seaSeed ^ 0x5bd1e995));
+        {
+            // Its base, over the hill: lumpy, rising and dipping along it, and
+            // always above the leafy crowns (the tallest reach 0.053 of the
+            // height), so only the tall spruces' tops go up into it.
+            float swell = Col.Clamp01(0.5f + 0.6f * Col.Fbm(x / H * 1.6f + drift, 2, seaSeed ^ 0x1b873593));
+            seaEdge[x] = ground[(Layers.Length - 1) * width + x] - (0.07f + 0.028f * swell) * H
+                - 0.012f * H * Math.Abs(Col.Fbm(x / H * 9 + drift * 3, 3, seaSeed ^ 0x5bd1e995));
+        }
+        float seaBase = w.Sea * Col.Clamp01(1 - 2 * w.Broken);  // how solid its base is: overcast, not broken
+        // The bright sea lights the cabin's hill softly from all round: the
+        // meadow lifts toward the clouds' shaded grey, most at its far edge.
+        float seaLift = 0.3f * w.Sea;
         var seaLight = new float[width * seaRows];
         var seaDepth = new float[width * seaRows];  // how far off, for haze and gaps
         var seaCover = new float[width * seaRows];
@@ -1089,7 +1100,7 @@ sealed class Scene
         // the trees let them go, browning through winter, until snow covers
         // them or spring's grass grows over them.
         float carpetGain = (season.Year > 0.75f ? 1 : 1 - Col.Smoothstep(0.18f, 0.30f, season.Year)) * (1 - groundSnow);
-        float carpetBrown = season.Year > 0.75f ? 0.6f * Col.Smoothstep(0.86f, 1, season.Year) : 0.6f + 0.3f * Col.Smoothstep(0, 0.2f, season.Year);
+        float carpetBrown = season.Year > 0.75f ? 0.3f + 0.3f * Col.Smoothstep(0.86f, 1, season.Year) : 0.6f + 0.3f * Col.Smoothstep(0, 0.2f, season.Year);
         var carpetCell = new int[Layers.Length];
         for (int l = 0; l < Layers.Length; l++)
             carpetCell[l] = Math.Max((int)Math.Round(0.0016f * H * Layers[l].Trees / Layers[near].Trees, MidpointRounding.AwayFromZero), 1);
@@ -1184,6 +1195,14 @@ sealed class Scene
                 float frontTree = 0;  // how much of this pixel is tree or porch, in front
                 for (int l = 0; l < Layers.Length; l++)
                 {
+                    if (l == near && seaBase > 0 && fy > seaEdge[x] && fy < seaEdge[x] + 0.04f * H)
+                    {
+                        // The base frays: soft tongues of cloud hang lower here and
+                        // there, in front of the hills beyond, behind the cabin's hill.
+                        float n = Col.Fbm2(fx / (0.12f * H) + drift * 2, fy / (0.02f * H), 3, seaSeed ^ 0x9e3779b9);
+                        float reach = 0.04f * H * Col.Clamp01(1.6f * n);
+                        if (reach > 0) c = Col.Mix(c, seaHazeColor, 0.8f * seaBase * Col.Smoothstep(seaEdge[x] + reach, seaEdge[x], fy));
+                    }
                     if (l == bowLayer && bowGain > 0)
                     {
                         // Rainbow light, added: violet inside, red outside; the
@@ -1224,6 +1243,8 @@ sealed class Scene
                     Layer layer = Layers[l];
                     float gy = ground[l * width + x];
                     RGB tone = Col.Mix(tones[l], fog, layer.Mist * Col.Smoothstep(0, mistDepth, fy - gy));
+                    if (l == near && seaLift > 0 && tree < 1 && fy >= gy)
+                        tone = Col.MixOklab(tone, seaShade, seaLift * (0.8f + 0.2f * Col.Smoothstep(gy + 0.1f * H, gy, fy)) * (1 - tree));
                     if (tree > 0) tone = tone * (1 - 0.18f * (1 - layer.Haze) * tree);  // spruce darker than meadow
                     if (birch && spruceCov > 0)
                     {
@@ -1250,7 +1271,7 @@ sealed class Scene
                         // Fallen leaves: a flat, ragged pool around each trunk,
                         // a leaf to each small cell, the floor tinted between;
                         // on the near meadow a few blown far out from it.
-                        float amount = 0;
+                        float amount = 0, pool = 0;  // pool: under a crown, not blown out
                         int species = 0;
                         float ragged = 0.75f + 0.5f * Col.ValueNoise2(fx / (0.01f * H), fy / (0.004f * H), 0x4b1d);
                         for (int q = 0; q < 4; q++)
@@ -1259,24 +1280,53 @@ sealed class Scene
                             if (ti < 0) continue;
                             Leafy lt = leafy[ti];
                             float gone = (season.Year > 0.75f ? Leaves.Fall(season, lt.Species) : 1) * carpetGain;
-                            float lu = (fx - lt.X) / (1.5f * lt.Rx * ragged), lv = (fy - lt.Base) / ((l == near ? 0.3f : 0.15f) * lt.Rx * ragged);
+                            float lu = (fx - lt.X) / (1.5f * lt.Rx * ragged), lv = (fy - lt.Base) / ((l == near ? 0.4f : 0.15f) * lt.Rx * ragged);
                             float la = gone * Col.Exp(-(lu * lu + lv * lv));
+                            pool = Math.Max(pool, la);
                             if (l == near && fy > lt.Base)
                             {
-                                la = Math.Max(la, 0.18f * gone * Col.Exp(-Math.Abs(lu) / 3 - (fy - lt.Base) / (0.06f * H))
+                                la = Math.Max(la, 0.15f * gone * Col.Exp(-Math.Abs(lu) / 3 - (fy - lt.Base) / (0.05f * H))
                                     * Col.Smoothstep(5.5f, 3.5f, Math.Abs(fx - lt.X) / lt.Rx));
                             }
                             if (la > amount) { amount = la; species = lt.Species; }
                         }
                         if (amount > 0.01f)
                         {
-                            int cs = carpetCell[l];
-                            uint h1 = Col.Hash32(unchecked((uint)(x / cs) * 0x9e3779b1 ^ (uint)(y * 5 / (3 * cs)) * 0x85ebca6b ^ 0x1ea7));
+                            // Leaves lie in the light the ground has: a little brighter
+                            // than it, in their own colors. Under the tree they tint the
+                            // floor between them; on the near meadow they're cells seen
+                            // in perspective, bigger and rounder nearer.
+                            float cs = carpetCell[l];
+                            float cu = fx / cs, cv = fy / (0.6f * cs), cpx = 1 / cs;
+                            if (l == near)
+                            {
+                                float d0 = gy - horizonY, dy0 = fy - horizonY;
+                                cu = (fx - w2) * d0 / (dy0 * cs);
+                                cv = d0 * d0 / (0.6f * cs * dy0);
+                                cpx = d0 / (dy0 * cs);
+                            }
+                            float iu = (float)Math.Floor(cu), iv = (float)Math.Floor(cv);
+                            uint h1 = Col.Hash32(unchecked((uint)(int)iu * 0x9e3779b1 ^ (uint)(int)iv * 0x85ebca6b ^ 0x1ea7));
                             uint[] lpath = Leaves.Paths[species];
-                            RGB fallen = Col.MixOklab(RGB.Hex(lpath[lpath.Length - 1 - (int)(h1 >> 8) % 2]), RGB.Hex(0x6a4a32), carpetBrown);
-                            fallen = fallen * (0.8f + 0.4f * Col.Unit(h1 >> 3));
-                            float lk = Col.Unit(h1) < amount * 1.3f ? 1 : 0.5f * amount * amount;
-                            tone = Col.Mix(tone, inTone(fallen, l, tone), lk * (1 - tree));
+                            RGB fresh = RGB.Hex(lpath[lpath.Length - 1 - (int)(h1 >> 8) % 2]);
+                            // A few leaves from a whole crown already cover a lot of floor;
+                            // fresh ones are brighter and more colorful than the matted
+                            // brown of winter.
+                            float freshness = 1 - carpetBrown;
+                            RGB floor = tone;
+                            float floorLum = Math.Max(Overlay.Luminance(tone), 1e-5f), carpetSat = 0.55f + 0.35f * freshness;
+                            RGB wash = OnGround(floor, floorLum, Col.MixOklab(RGB.Hex(lpath[lpath.Length - 2]), RGB.Hex(0x6a4a32), Math.Max(carpetBrown, 0.4f)),
+                                                1.2f + 0.7f * freshness, lightLevel, carpetSat);
+                            tone = Col.Mix(tone, wash, 0.7f * (1 - Col.Exp(-4 * pool)) * (1 - tree));
+                            if (Col.Unit(h1) < 1 - Col.Exp(-4 * amount))
+                            {
+                                float fu = cu - iu - 0.35f - 0.3f * Col.Unit(h1 >> 4), fv = cv - iv - 0.35f - 0.3f * Col.Unit(h1 >> 12);
+                                float inside = Col.Clamp01((0.34f - Col.Sqrt(fu * fu + fv * fv)) / cpx + 0.5f);
+                                float brown = Col.Clamp01(carpetBrown + 0.35f * (Col.Unit(h1 >> 20) - 0.3f));
+                                RGB fallen = OnGround(floor, floorLum, Col.MixOklab(fresh, RGB.Hex(0x6a4a32), brown),
+                                                      1.4f + 1.2f * freshness + (0.6f + 0.6f * freshness) * Col.Unit(h1 >> 3), lightLevel, carpetSat);
+                                tone = Col.Mix(tone, fallen, inside * (1 - tree));
+                            }
                         }
                     }
                     if (groundSnow > 0 && tree > 0.3f)
@@ -1341,10 +1391,10 @@ sealed class Scene
                     if (seaRows > 0 && l >= 2)
                     {
                         if (l < Layers.Length - 1)
-                            tone = Col.Mix(tone, seaShade * 0.6f, 0.3f * w.Sea);  // the hills beyond, in the clouds' shade
+                            tone = Col.Mix(tone, seaShade * 0.5f, 0.45f * w.Sea);  // the hills beyond, in the clouds' shade
                         else if (fy < gy)
-                            // Treetops fade up into the clouds' base.
-                            tone = Col.Mix(tone, seaHazeColor, 0.6f * w.Sea * Col.Clamp01(1 - 2 * w.Broken) * Col.Smoothstep(seaEdge[x] + 0.035f * H, seaEdge[x], fy));
+                            // The tall spruces' tops fade up into the clouds' base.
+                            tone = Col.Mix(tone, seaHazeColor, 0.6f * seaBase * Col.Smoothstep(seaEdge[x] + 0.015f * H, seaEdge[x], fy));
                     }
                     c = cov == 1 ? tone : Col.Mix(c, tone, cov);
                     frontTree = frontTree * (1 - cov) + tree;
@@ -1415,6 +1465,14 @@ sealed class Scene
         uint a = Col.Hash32(h), b = Col.Hash32(a ^ 0x68bc21eb);
         float s = Col.LinearToSrgb(shoulder) * 255 + Col.Unit(a) + Col.Unit(b) - 1;
         return (byte)Math.Min(Math.Max(Math.Round(s, MidpointRounding.AwayFromZero), 0), 255);
+    }
+
+    /// A fallen leaf's color on the floor: `k` times as bright as the floor,
+    /// in its own colors (no brighter than in full light), `sat` of the way
+    /// from the floor's.
+    static RGB OnGround(RGB floor, float floorLum, RGB c, float k, float lightLevel, float sat)
+    {
+        return Col.MixOklab(floor, c * Math.Min(k * floorLum / Math.Max(Overlay.Luminance(c), 1e-5f), lightLevel), sat);
     }
 
     /// How much of a unit disk another disk of radius `r` covers, its center

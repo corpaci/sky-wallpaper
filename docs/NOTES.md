@@ -72,14 +72,20 @@ In autumn the turning runs through the crown as a wave from the top down
 patches running ahead branch by branch; each leaf follows its species'
 colors, and the first to turn fall first, a few at a time all over the crown,
 some twigs holding on. Oak and beech keep low dead leaves until spring
-(marcescence). Fallen leaves lie in a flat ragged pool around each trunk,
-blow out over the near meadow, and brown through winter; spring grass covers
-them by mid-April. The summit's snow line is a cosine over the year, or,
-with a forecast, the day's median freezing level (summit 1000–3500 m, snow
-lying 200 m below it). Snow cover comes from the forecast's snow depth, and
-hoarfrost from temperatures below freezing before 11:00. Colors that come
-into the landscape are drawn 60% of the way from the layer's own tone,
-less on far layers, so they take its light and haze.
+(marcescence). Fallen leaves lie in a flat ragged pool around each trunk, a
+few blow out over the near meadow, and they brown through winter; spring
+grass covers them by mid-April. They take the floor's light: each leaf is
+about 1.5–3.3 times as bright as the floor under it, in its own colors (fresh
+ones brighter and more colorful than winter's matted brown), and under the
+crown a wash tints the floor between them, rising fast with the first leaves
+(1 − e^(−4·fallen)). On the near meadow the leaf cells are laid out in
+perspective, so leaves grow larger and rounder toward the bottom. The
+summit's snow line is a cosine over the year, or, with a forecast, the day's
+median freezing level (summit 1000–3500 m, snow lying 200 m below it). Snow
+cover comes from the forecast's snow depth, and hoarfrost from temperatures
+below freezing before 11:00. Colors that come into the landscape are drawn
+60% of the way from the layer's own tone, less on far layers, so they take
+its light and haze.
 
 **Life** (`Life.swift`). Each day's plan is drawn from the date's number:
 whether the two go out (one day in four; more on rainy days; always on a
@@ -118,9 +124,12 @@ isn't mirrored, and no cloud covers the sky:
   - each is lit from the sun's side (the moon's at night), and shading is
     blended between depth steps so they don't show;
   - far off, the lumps flatten and fade into haze;
-  - its soft, lumpy base hangs at the height of the tall spruces' tops, which
-    fade up into it; under it the hills beyond lie in grey shade, while the
-    cabin's hill stays in clear light.
+  - its soft, lumpy base rises and dips along the cabin's hill, always above
+    the leafy crowns (the tallest reach 0.053 of the screen height above the
+    ground), so only the tall spruces' tops fade up into it; it frays into
+    soft tongues over the hills beyond, which lie in grey shade under it;
+  - the cabin's hill takes the sea's soft light: its meadow lifts 30% toward
+    the clouds' shaded grey, while the cabin and the spruces stay dark.
 - **Cloudy** is the same sea, broken: noise over the cloud surface, looked
   up per pixel from its depth there, opens wide gaps that show the land
   beneath, so banks of cloud lie in the valleys.

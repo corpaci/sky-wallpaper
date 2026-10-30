@@ -153,8 +153,8 @@ half a year on), or from the forecast where it says more:
   a time, until it's bare. Oak and beech keep their low dead leaves until
   spring. Two fruit trees by the cabin blossom white and pink in April and
   bear apples in late summer.
-- **The ground:** fallen leaves gather in pools under each tree and blow out
-  over the meadow, then brown through winter; flowers come in spring and
+- **The ground:** fallen leaves color the floor under each tree, a few blow
+  out over the meadow, and they brown through winter; flowers come in spring and
   summer, fireflies on warm midsummer nights; snow and morning frost lie where
   the forecast has them, on the branches and the roof too.
 
@@ -204,8 +204,9 @@ a year, and a bear shows in about 25 frames a year.
 Grey weather isn't mirrored back at you, and no cloud ever covers the sky;
 the scene shows what's beyond the weather:
 - **Overcast:** you're above it. A sunlit sea of clouds covers the world
-  below, its base at the tops of the tall spruces by the cabin, the summit
-  and far ridges rising out of it, and sun, moon and stars clear overhead.
+  below, its base just over the trees by the cabin (only the tall spruces
+  reach into it), fraying over the hills beyond; the summit and far ridges
+  rise out of it, and sun, moon and stars are clear overhead.
 - **Fog:** fog lakes lie low in the far valleys under a clear sky.
 - **Rain:** the moment after. A rainbow stands opposite the sun while it's
   low (from this view, at the far edge, with its faint second bow), in the
