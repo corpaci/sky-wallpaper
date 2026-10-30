@@ -123,6 +123,8 @@ sealed class Ephemeris
     public readonly Vec3 Sun;              // horizontal directions
     public readonly Vec3 Moon;             // as seen from here: parallax shifts it up to 1°
     public readonly Vec3 MoonFromCenter;   // as seen from the Earth's center, for eclipse geometry
+    public readonly double MoonRadius;     // apparent, degrees, from here
+    public readonly double SunRadius;      // apparent, degrees
     public readonly double SunLongitude;   // ecliptic, degrees
     public readonly double MoonPhaseAngle; // sun–moon–observer, degrees: 0 full, 180 new
     public readonly Vec3 EclipticPole;     // horizontal; the moon's axis stays within 1.5° of it
@@ -179,7 +181,10 @@ sealed class Ephemeris
         ToEcliptic = fromEcliptic.Transposed;
         Sun = fromEcliptic.Apply(sunEcl).Unit;
         MoonFromCenter = fromEcliptic.Apply(moonEcl).Unit;
-        Moon = (fromEcliptic.Apply(moonEcl) - new Vec3(0, 0, 1)).Unit;  // the observer stands one Earth radius up
+        Vec3 fromHere = fromEcliptic.Apply(moonEcl) - new Vec3(0, 0, 1);  // the observer stands one Earth radius up
+        Moon = fromHere.Unit;
+        MoonRadius = Math.Asin(0.2725 / fromHere.Length) / Astro.Rad;
+        SunRadius = 0.2666 / sunEcl.Length;
         SunLongitude = sunEcl.Lon;
         const double earthRadiiPerAU = 23454.8;
         MoonPhaseAngle = (sunEcl * earthRadiiPerAU - moonEcl).Angle(moonEcl * -1);
@@ -289,5 +294,42 @@ sealed class Star
             grain[n] = new Grain { Direction = toJ2000.Apply(Vec3.FromLonLat(l, b)), Light = light, Bv = 1.4f * rng.Unit() };
         }
         return grain;
+    }
+}
+
+/// The day's eclipse, if one is seen from here: a solar one with the sun
+/// up, or a lunar one with the moon up and in the Earth's umbra (the
+/// penumbra alone barely shows) while the sun is down. Its local minute of
+/// greatest phase as seen from here, found to the minute.
+sealed class Eclipse
+{
+    public int Minute;
+    public bool Solar;
+
+    public static Eclipse Find(int year, int month, int day, int utcOffset, double latitude, double longitude)
+    {
+        Func<int, double[]> depth = minute =>  // > 0 when eclipsed and seen: solar, lunar
+        {
+            var sky = new Ephemeris(latitude, longitude, Ephemeris.DayNumber(year, month, day, minute - utcOffset));
+            double solar = sky.Sun.Z > 0 ? sky.SunRadius + sky.MoonRadius - sky.Moon.Angle(sky.Sun) : -1;
+            double lunar = sky.Moon.Z > 0 && sky.Sun.Z < 0 ? 0.70 + 0.26 - sky.MoonFromCenter.Angle(sky.Sun * -1) : -1;
+            return new[] { solar, lunar };
+        };
+        Eclipse best = null;
+        double bestDepth = 0;
+        for (int coarse = 0; coarse < 1440; coarse += 10)
+        {
+            double[] d = depth(coarse);
+            if (!(Math.Max(d[0], d[1]) > -0.3)) continue;  // near enough to look closer
+            for (int minute = Math.Max(coarse - 10, 0); minute <= Math.Min(coarse + 10, 1439); minute++)
+            {
+                double[] m = depth(minute);
+                for (int k = 0; k < 2; k++)
+                {
+                    if (m[k] > 0 && m[k] > bestDepth) { best = new Eclipse { Minute = minute, Solar = k == 0 }; bestDepth = m[k]; }
+                }
+            }
+        }
+        return best;
     }
 }

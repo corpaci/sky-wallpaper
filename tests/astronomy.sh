@@ -42,6 +42,11 @@ expect polaris-alt-berlin 51.7 53.3            # the latitude, 52.52°, ± Polar
 expect galactic-center-l -0.05 0.05
 expect galactic-center-b -0.05 0.05
 expect stars 2847 2847
+expect eclipse-dallas-2024-ut 18.62 18.78     # total at Dallas, greatest 18:42 UT
+expect eclipse-dallas-2024-solar 1 1
+expect eclipse-berlin-2028-ut 16.78 16.95      # total lunar, greatest 16:52 UT, the moon up over Berlin
+expect eclipse-berlin-2028-solar 0 0
+expect eclipse-berlin-none-ut -1 -1
 
 if command -v csc >/dev/null && command -v mono >/dev/null; then
     csc -nologo -langversion:5 -codepage:65001 -optimize+ -out:"$tmp/check.exe" \

@@ -59,3 +59,15 @@ say("polaris-alt-berlin", asin(berlin.fromJ2000.apply(polaris.direction).z) * 18
 let gc = berlin.toGalactic.apply(berlin.fromJ2000.apply(Vec3(lon: 266.405, lat: -28.936)))
 say("galactic-center-l", gc.lon); say("galactic-center-b", gc.lat)
 say("stars", Double(Star.catalog.count))
+
+// The eclipse finder: the minute of greatest eclipse seen from a place, in
+// hours UT, and whether it's solar (1) or lunar (0); -1 on a day without one.
+func eclipseSeen(_ name: String, _ y: Int, _ m: Int, _ d: Int, lat: Double, lon: Double) {
+    let e = eclipse(year: y, month: m, day: d, utcOffset: 0, latitude: lat, longitude: lon)
+    say(name + "-ut", e.map { Double($0.minute) / 60 } ?? -1)
+    say(name + "-solar", e.map { $0.solar ? 1 : 0 } ?? -1)
+}
+eclipseSeen("eclipse-dallas-2024", 2024, 4, 8, lat: 32.78, lon: -96.80)
+eclipseSeen("eclipse-berlin-2028", 2028, 12, 31, lat: 52.52, lon: 13.40)
+eclipseSeen("eclipse-berlin-none", 2026, 10, 29, lat: 52.52, lon: 13.40)
+

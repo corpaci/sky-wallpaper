@@ -59,13 +59,18 @@ sealed class Weather
 sealed class Forecast
 {
     public readonly Sky[] Hours;  // local hours 0…23
+    // For the seasons, when the response has them, by local hour:
+    public float[] Temperature;    // °C at 2 m
+    public float[] SnowDepth;      // m of snow lying
+    public float[] FreezingLevel;  // m above sea level
 
     Forecast(Sky[] hours) { Hours = hours; }
 
     public static string Url(double latitude, double longitude, string date)
     {
         return "https://api.open-meteo.com/v1/forecast?latitude=" + Tenth(latitude) + "&longitude=" + Tenth(longitude)
-            + "&hourly=weather_code,cloud_cover&timezone=auto&start_date=" + date + "&end_date=" + date;
+            + "&hourly=weather_code,cloud_cover,temperature_2m,snow_depth,freezing_level_height"
+            + "&timezone=auto&start_date=" + date + "&end_date=" + date;
     }
 
     static string Tenth(double v)
@@ -97,15 +102,55 @@ sealed class Forecast
         string[] times = Values(json, hourly, "time"), codes = Values(json, hourly, "weather_code"), covers = Values(json, hourly, "cloud_cover");
         if (times == null || codes == null || covers == null || codes.Length != times.Length || covers.Length != times.Length) return null;
         var hours = new Sky?[24];
+        var index = Enumerable.Repeat(-1, 24).ToArray();  // response row of each local hour
         for (int i = 0; i < times.Length; i++)
         {
             if (times[i].Length < date.Length + 3 || !times[i].StartsWith(date + "T", StringComparison.Ordinal)) continue;
             int hour;
             if (!int.TryParse(times[i].Substring(date.Length + 1, 2), NumberStyles.Integer, CultureInfo.InvariantCulture, out hour) || hour < 0 || hour > 23) continue;
             hours[hour] = SkyOf(Int(codes[i]), Int(covers[i]));
+            index[hour] = i;
         }
         if (hours.Any(h => !h.HasValue)) return null;
-        return new Forecast(hours.Select(h => h.Value).ToArray());
+        var f = new Forecast(hours.Select(h => h.Value).ToArray());
+        Func<string, float[]> series = name =>  // all 24 hours, or none
+        {
+            string[] values = Values(json, hourly, name);
+            if (values == null || values.Length != times.Length) return null;
+            var v = new float[24];
+            for (int h = 0; h < 24; h++)
+            {
+                double d;
+                if (!double.TryParse(values[index[h]], NumberStyles.Float, CultureInfo.InvariantCulture, out d)) return null;
+                v[h] = (float)d;
+            }
+            return v;
+        };
+        f.Temperature = series("temperature_2m");
+        f.SnowDepth = series("snow_depth");
+        f.FreezingLevel = series("freezing_level_height");
+        return f;
+    }
+
+    /// The day's ground for `season`'s date, at a local hour: the snow line
+    /// from the freezing level (on a summit from 1000 to 3500 m, the snow
+    /// lying about 200 m below it), snow where the forecast has it, and
+    /// hoarfrost on freezing mornings.
+    public Season Ground(Season season, int hour)
+    {
+        Season s = season;
+        if (FreezingLevel != null)
+        {
+            float median = FreezingLevel.OrderBy(v => v).ElementAt(12);
+            s.SnowLine = Math.Min(Math.Max((median - 200 - 1000) / 2500, 0.03f), 0.88f);
+        }
+        if (SnowDepth != null) s.SnowCover = Col.Smoothstep(0.005f, 0.04f, SnowDepth[hour]);
+        if (Temperature != null)
+        {
+            s.Frost = hour < 11 ? Col.Smoothstep(0.5f, -3, Temperature[hour]) * (1 - s.SnowCover) : 0;
+            s.Warm = Temperature[hour] >= 14;
+        }
+        return s;
     }
 
     static string[] Values(string json, int from, string key)

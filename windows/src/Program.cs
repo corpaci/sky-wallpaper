@@ -318,6 +318,7 @@ static class Program
         public int Minute;
         public string Flags = "";
         public Sky Sky = Sky.Clear;
+        public bool Exact;  // its sky at its own minute, not halfway to the next frame's
 
         public string Name { get { return Label + (Sky == Sky.Clear ? "" : "-" + Weather.Name(Sky)); } }
     }
@@ -407,6 +408,8 @@ static class Program
         int skyOffset = utcOffset.HasValue ? utcOffset.Value : (int)TimeZoneInfo.Local.GetUtcOffset(skyDay.AddHours(12)).TotalMinutes;
         double skyLatitude = latitude.HasValue ? latitude.Value : 45;
         double skyLongitude = longitude.HasValue ? longitude.Value : skyOffset / 4.0;
+        Season baseSeason = Season.ForDate(skyDay.Year, skyDay.Month, skyDay.Day, skyLatitude);
+        int dayIndex = (int)Ephemeris.DayNumber(skyDay.Year, skyDay.Month, skyDay.Day, 0);
         if (sizes.Count == 0 && dryRun) sizes.Add(new[] { 2560, 1664 });
         if (sizes.Count == 0)
         {
@@ -453,6 +456,19 @@ static class Program
             }
         }
         frames = frames.Concat(nightFrames).OrderBy(f => f.Minute).ToList();
+
+        // A rare day: an eclipse seen from here gets a frame at its greatest phase.
+        Eclipse eclipse = Eclipse.Find(skyDay.Year, skyDay.Month, skyDay.Day, skyOffset, skyLatitude, skyLongitude);
+        if (eclipse != null)
+        {
+            Frame at = frames.FirstOrDefault(f => Math.Abs(f.Minute - eclipse.Minute) <= 2);
+            if (at != null) { at.Minute = eclipse.Minute; at.Exact = true; }
+            else
+            {
+                frames.Add(new Frame { Label = eclipse.Solar ? "solar-eclipse" : "lunar-eclipse", Minute = eclipse.Minute, Exact = true });
+                frames = frames.OrderBy(f => f.Minute).ToList();
+            }
+        }
         if (forcedSky.HasValue) foreach (Frame f in frames) f.Sky = forcedSky.Value;
 
         // Weather: each frame takes its hour's sky, plus one more frame on every
@@ -516,8 +532,11 @@ static class Program
                 // The sky as it stands halfway through the time this frame shows.
                 int end = i + 1 < frames.Count ? frames[i + 1].Minute : 1440;
                 var sky = new Ephemeris(skyLatitude, skyLongitude,
-                                        Ephemeris.DayNumber(skyDay.Year, skyDay.Month, skyDay.Day, (f.Minute + end) / 2.0 - skyOffset));
-                byte[] pixels = scene.Render(f.Minute, sun, sky, Col.Hash32(unchecked((uint)i + seed)), new Weather(f.Sky));
+                                        Ephemeris.DayNumber(skyDay.Year, skyDay.Month, skyDay.Day, (f.Exact ? f.Minute : (f.Minute + end) / 2.0) - skyOffset));
+                Season season = forecast != null ? forecast.Ground(baseSeason, f.Minute / 60) : baseSeason;
+                MeteorShower meteors = MeteorShower.At(skyDay.Month, skyDay.Day, f.Minute);
+                var life = new Life(dayIndex, seed, f.Minute, sun, season, f.Sky, meteors != null);
+                byte[] pixels = scene.Render(f.Minute, sun, sky, season, meteors, life, Col.Hash32(unchecked((uint)i + seed)), new Weather(f.Sky));
                 Png.Write(Path.Combine(dir, name), pixels, width, height);
                 manifest.Add(Clock(f.Minute) + "  " + name + (f.Flags == "" ? "" : "  " + f.Flags));
                 Console.WriteLine("{0}  {1}  sun {2:+0.0;-0.0} deg  moon {3,3:F0}% {4:+0.0;-0.0} deg  {5:F2}s", Clock(f.Minute), name,

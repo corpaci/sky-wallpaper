@@ -110,12 +110,15 @@ guard ymd.count == 3, let noonUTC = utcCalendar.date(from: DateComponents(year: 
       utcCalendar.component(.day, from: noonUTC) == ymd[2] else { fail("--date wants yyyy-MM-dd") }
 let skyOffset = utcOffset ?? TimeZone.current.secondsFromGMT(for: noonUTC) / 60
 let skyLatitude = latitude ?? 45, skyLongitude = longitude ?? Double(skyOffset) / 4
+let baseSeason = Season(year: ymd[0], month: ymd[1], day: ymd[2], latitude: skyLatitude)
+let dayIndex = Int(Ephemeris.dayNumber(year: ymd[0], month: ymd[1], day: ymd[2], minutesUT: 0))
 
 struct Frame {
     let label: String
     let minute: Int
     var flags: [String] = []
     var sky = Sky.clear
+    var exact = false  // its sky at its own minute, not halfway to the next frame's
 
     var name: String { label + (sky == .clear ? "" : "-" + sky.rawValue) }
 }
@@ -148,6 +151,16 @@ for (frame, end) in zip(frames, frames.dropFirst().map(\.minute) + [1440]) {
     }
 }
 frames = (frames + nightFrames).sorted { $0.minute < $1.minute }
+
+// A rare day: an eclipse seen from here gets a frame at its greatest phase.
+if let e = eclipse(year: ymd[0], month: ymd[1], day: ymd[2], utcOffset: skyOffset, latitude: skyLatitude, longitude: skyLongitude) {
+    if let i = frames.firstIndex(where: { abs($0.minute - e.minute) <= 2 }) {
+        frames[i] = Frame(label: frames[i].label, minute: e.minute, flags: frames[i].flags, exact: true)
+    } else {
+        frames.append(Frame(label: e.solar ? "solar-eclipse" : "lunar-eclipse", minute: e.minute, exact: true))
+        frames.sort { $0.minute < $1.minute }
+    }
+}
 if let forcedSky { for i in frames.indices { frames[i].sky = forcedSky } }
 
 // Weather: each frame takes its hour's sky, plus one more frame on every
@@ -203,9 +216,13 @@ for (i, frame) in frames.enumerated() {
     // The sky as it stands halfway through the time this frame shows.
     let end = i + 1 < frames.count ? frames[i + 1].minute : 1440
     let d = Ephemeris.dayNumber(year: ymd[0], month: ymd[1], day: ymd[2],
-                                minutesUT: Double(frame.minute + end) / 2 - Double(skyOffset))
+                                minutesUT: (frame.exact ? Double(frame.minute) : Double(frame.minute + end) / 2) - Double(skyOffset))
     let sky = Ephemeris(latitude: skyLatitude, longitude: skyLongitude, d: d)
-    let pixels = scene.render(minute: frame.minute, sun: sun, sky: sky, salt: hash32(UInt32(i) &+ seed), weather: Weather(frame.sky))
+    let season = forecast?.ground(baseSeason, hour: frame.minute / 60) ?? baseSeason
+    let meteors = meteorShower(month: ymd[1], day: ymd[2], minute: frame.minute)
+    let life = Life(day: dayIndex, seed: seed, minute: frame.minute, sun: sun, season: season, sky: frame.sky, starNight: meteors != nil)
+    let pixels = scene.render(minute: frame.minute, sun: sun, sky: sky, season: season, meteors: meteors, life: life,
+                              salt: hash32(UInt32(i) &+ seed), weather: Weather(frame.sky))
     writePNG(pixels, width: width, height: height, to: dir.appendingPathComponent(name))
     manifest += "\(clock(frame.minute))  \(name)\(frame.flags.isEmpty ? "" : "  " + frame.flags.joined(separator: " "))\n"
     print(String(format: "%@  %@  sun %+5.1f°  moon %3.0f%% %+5.1f°  %.2fs", clock(frame.minute), name,

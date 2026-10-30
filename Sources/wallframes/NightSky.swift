@@ -152,3 +152,27 @@ func moonAlbedo(_ x: Float, _ y: Float) -> Float {
     }
     return 1 - dark + bright + 0.05 * fbm2(x * 6, y * 6, octaves: 3, seed: 0x3c6ef372)
 }
+
+/// The major meteor showers: peak date, radiant (J2000, degrees), and how
+/// many streaks a frame shows at the peak with the radiant high.
+let meteorShowers: [(name: String, month: Int, day: Int, ra: Double, dec: Double, count: Int)] = [
+    ("Quadrantids", 1, 3, 230, 49, 8),
+    ("Lyrids", 4, 22, 271, 34, 3),
+    ("Eta Aquariids", 5, 6, 338, -1, 4),
+    ("Perseids", 8, 12, 48, 58, 9),
+    ("Orionids", 10, 21, 95, 16, 4),
+    ("Leonids", 11, 17, 152, 22, 3),
+    ("Geminids", 12, 14, 112, 33, 10),
+]
+
+/// The shower whose peak night a local date and minute fall in: from noon
+/// on its peak date to noon the day after.
+func meteorShower(month: Int, day: Int, minute: Int) -> (radiant: Vec3, count: Int)? {
+    for s in meteorShowers {
+        let evening = month == s.month && day == s.day && minute >= 720
+        let next = Ephemeris.dayNumber(year: 2001, month: s.month, day: s.day + 1, minutesUT: 0)
+            == Ephemeris.dayNumber(year: 2001, month: month, day: day, minutesUT: 0)  // the day after, any month length
+        if evening || (next && minute < 720) { return (Vec3(lon: s.ra, lat: s.dec), s.count) }
+    }
+    return nil
+}

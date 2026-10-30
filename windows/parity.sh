@@ -42,4 +42,15 @@ for place in "vienna 48.2 16.4 120" "sydney -33.9 151.2 600"; do
     mono "$tmp/sky.exe" render "${night[@]}" --out "$tmp/cs-$name" >/dev/null
     swift windows/compare.swift "$tmp/swift-$name" "$tmp/cs-$name/$size" || failed=1
 done
+# Rare days, Berlin: an eclipse at sunset with the Perseids that night and
+# the two out stargazing; a lunar eclipse on a winter night; spring in
+# blossom with a bear and her cubs about.
+for rare in "2026-08-12 120" "2028-12-31 60" "2026-05-27 120"; do
+    read -r date offset <<<"$rare"
+    echo "== rare day, $date"
+    day=(--size "$size" --lat 52.5 --lon 13.4 --date "$date" --utc-offset "$offset")
+    .build/release/wallframes "${day[@]}" --out "$tmp/swift-$date" >/dev/null
+    mono "$tmp/sky.exe" render "${day[@]}" --out "$tmp/cs-$date" >/dev/null
+    swift windows/compare.swift "$tmp/swift-$date" "$tmp/cs-$date/$size" || failed=1
+done
 exit $failed

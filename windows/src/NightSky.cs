@@ -166,3 +166,36 @@ static class NightSky
         return 1 - dark + bright + 0.05f * Col.Fbm2(x * 6, y * 6, 3, 0x3c6ef372);
     }
 }
+
+/// The major meteor showers: peak date, radiant (J2000, degrees), and how
+/// many streaks a frame shows at the peak with the radiant high.
+sealed class MeteorShower
+{
+    public Vec3 Radiant;
+    public int Count;
+
+    static readonly double[][] Showers = {
+        new double[] { 1, 3, 230, 49, 8 },    // Quadrantids
+        new double[] { 4, 22, 271, 34, 3 },   // Lyrids
+        new double[] { 5, 6, 338, -1, 4 },    // Eta Aquariids
+        new double[] { 8, 12, 48, 58, 9 },    // Perseids
+        new double[] { 10, 21, 95, 16, 4 },   // Orionids
+        new double[] { 11, 17, 152, 22, 3 },  // Leonids
+        new double[] { 12, 14, 112, 33, 10 }, // Geminids
+    };
+
+    /// The shower whose peak night a local date and minute fall in: from noon
+    /// on its peak date to noon the day after.
+    public static MeteorShower At(int month, int day, int minute)
+    {
+        foreach (double[] s in Showers)
+        {
+            int m = (int)s[0], d = (int)s[1];
+            bool evening = month == m && day == d && minute >= 720;
+            bool next = Ephemeris.DayNumber(2001, m, d + 1, 0) == Ephemeris.DayNumber(2001, month, day, 0);  // the day after, any month length
+            if (evening || (next && minute < 720)) return new MeteorShower { Radiant = Vec3.FromLonLat(s[2], s[3]), Count = (int)s[4] };
+        }
+        return null;
+    }
+}
+

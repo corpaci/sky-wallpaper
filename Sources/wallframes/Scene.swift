@@ -134,6 +134,8 @@ struct Scene {
     /// after sunset.
     struct Cabin {
         let x, halfWidth: Float
+        let base, wallH, roofH: Float  // where its walls stand, and how tall walls and roof are
+        let porch0, porch1: Float      // the porch's two ends
         let window: (x0: Float, x1: Float, y0: Float, y1: Float)
     }
 
@@ -143,9 +145,17 @@ struct Scene {
     private let ground: [Float]   // [layer * width + x] terrain line y, trees excluded
     private let top: [Float]      // [(layer * width + x) * sub + s] silhouette y: land and cabin
     private let trees: [UInt8]    // [(layer * height + y) * width + x] coverage of trees and porch, 0…255
-    private let snowLine: [Float] // [x] for the snowy layer
+    private let leaves: [UInt8]   // [((layer - 2) * height + y) * width + x] leafy trees' foliage, the wooded layers only
+    private let leafShade: [UInt8] // and its light band and height in the crown (LeafyTree.stamp)
+    private let leafInfo: [UInt8]  // and its species and distance from the crown's middle
+    private let leafy: [(l: Int, x: Float, base: Float, rx: Float, species: Int)]  // leafy trees, for their fallen leaves
+    private let litterBy: [Int32]  // [(layer * width + x) * 4 + k] the four leafy trees whose leaves may lie here, or -1
+    private let snowLine: [Float] // [x] the snow line's ragged edge, an offset from where the season puts it
+    private let summitTop: Float  // the summit's highest point, y
+    private let flowers: [(x: Float, y: Float, r: Float, n: UInt32)]   // on the near meadow
+    private let fireflies: [(x: Float, y: Float, k: Float)]            // over the near meadow, by the trees
     private let snowSlope: [Float] // [x] its slope over ±3% of the height, so shading blends, not splits
-    private let cabin: Cabin
+    let cabin: Cabin
     private let flakes: [Float]   // glints of ice in the air, full frame
     private let glintPower: [Float] // drops on the wet meadow, full frame
     private let glintHue: [UInt8]   // and the color each catches, 0 = violet … 255 = red
@@ -191,7 +201,7 @@ struct Scene {
             if layer.snow {
                 let r = max(Int(0.03 * h), 1)
                 for x in 0..<width {
-                    snow[x] = (layer.base - layer.amp * 0.42) * h + 0.010 * h * fbm(Float(x) / h * 14, octaves: 3, seed: s ^ 0x7f4a7c15)
+                    snow[x] = 0.010 * h * fbm(Float(x) / h * 14, octaves: 3, seed: s ^ 0x7f4a7c15)
                     slopes[x] = (terrain(layer, s, Float(x + r) + 0.5) - terrain(layer, s, Float(x - r) + 0.5)) / Float(2 * r)
                 }
             }
@@ -213,6 +223,9 @@ struct Scene {
         // What stands on the land and lets the sky through between its parts
         // (trees, the porch) is drawn as 2-D coverage, one plane per layer.
         var cover = [UInt8](repeating: 0, count: Self.layers.count * width * height)
+        var leafCover = [UInt8](repeating: 0, count: (Self.layers.count - 2) * width * height)
+        var leafTone = leafCover, leafTag = leafCover
+        var leafyTrees: [(l: Int, x: Float, base: Float, rx: Float, species: Int)] = []
 
         // The porch, on the right: a lean-to roof on two posts, a railing with
         // balusters, and steps down to the ground.
@@ -256,9 +269,19 @@ struct Scene {
                 let wood = fbm(tx / h * 2.2, octaves: 2, seed: s ^ 0x9e3779b9) * 0.5 + 0.5
                 if wood > layer.forest { continue }
                 if l == near && tx > cabinX - cabinHalf - 2 * hw && tx < porch1 + 0.6 * cabinHalf + 2 * hw { continue }
-                let tree = spruce(x: tx, base: terrain(layer, s, tx) + 0.06 * th, height: th,
-                                  seed: hash32(s ^ (n &* 0x9e3779b1)), depth: th > 30 ? 2 : 1)
-                stamp(tree, into: &cover, plane: l, width: width, height: height)
+                let treeSeed = hash32(s ^ (n &* 0x9e3779b1))
+                if l >= 2 && hash32(treeSeed ^ 0x2f1e8a5b) % 10 < 3 {
+                    // Three trees in ten are leafy, bare in winter: their limbs with
+                    // the spruces, their crowns in a plane of their own.
+                    let base = terrain(layer, s, tx) + 0.04 * th
+                    let tree = LeafyTree(x: tx, base: base, height: th, seed: treeSeed, kind: .broad)
+                    tree.stamp(wood: &cover, woodLayer: l, leaf: &leafCover, shade: &leafTone, info: &leafTag,
+                               leafLayer: l - 2, width: width, height: height, h: th)
+                    leafyTrees.append((l, tx, base, tree.crown.rx, tree.species))
+                } else {
+                    stamp(spruce(x: tx, base: terrain(layer, s, tx) + 0.06 * th, height: th, seed: treeSeed, depth: th > 30 ? 2 : 1),
+                          into: &cover, plane: l, width: width, height: height)
+                }
             }
         }
         // Three tall ones by the cabin, where the branches can be seen.
@@ -270,15 +293,59 @@ struct Scene {
                   into: &cover, plane: near, width: width, height: height)
         }
 
-        cabin = Cabin(x: cabinX, halfWidth: cabinHalf,
+        // Two fruit trees on the meadow in front of the cabin.
+        for (k, (at, size)) in [(cabinX - 2.4 * cabinHalf, Float(0.045)), (porch1 + 1.2 * cabinHalf, 0.04)].enumerated() {
+            let th = size * h, base = groundAt(near, at) + 0.016 * h
+            let tree = LeafyTree(x: at, base: base, height: th, seed: hash32(seed ^ (UInt32(k + 7) &* 0x27d4eb2f)), kind: .fruit)
+            tree.stamp(wood: &cover, woodLayer: near, leaf: &leafCover, shade: &leafTone, info: &leafTag,
+                       leafLayer: near - 2, width: width, height: height, h: th)
+            leafyTrees.append((near, at, base, tree.crown.rx, tree.species))
+        }
+        // For each column, the four leafy trees nearest it (in crown widths),
+        // whose fallen leaves may lie there.
+        var by = [Int32](repeating: -1, count: Self.layers.count * width * 4)
+        var byNear = [Float](repeating: .infinity, count: Self.layers.count * width * 4)
+        for (i, t) in leafyTrees.enumerated() {
+            for x in max(Int(t.x - 6 * t.rx), 0)..<min(Int(t.x + 6 * t.rx) + 1, width) {
+                var (tree, u) = (Int32(i), abs(Float(x) + 0.5 - t.x) / t.rx)
+                for k in (t.l * width + x) * 4..<(t.l * width + x + 1) * 4 where u < byNear[k] {
+                    (by[k], byNear[k], tree, u) = (tree, u, by[k], byNear[k])  // insert, pushing the farther ones down
+                }
+            }
+        }
+        leafy = leafyTrees
+        litterBy = by
+
+        cabin = Cabin(x: cabinX, halfWidth: cabinHalf, base: base, wallH: wallH, roofH: roofH, porch0: porch0, porch1: porch1,
                       window: (cabinX - 0.55 * cabinHalf, cabinX - 0.15 * cabinHalf,
                                base - 0.72 * wallH, base - 0.38 * wallH))
 
         ground = groundY
         top = topY
         trees = cover
+        leaves = leafCover
+        leafShade = leafTone
+        leafInfo = leafTag
         snowLine = snow
         snowSlope = slopes
+        summitTop = groundY[0..<width].min()!
+
+        // Flowers on the near meadow, bigger nearer; the season says which bloom.
+        var flowerRng = SplitMix(state: UInt64(seed) &* 0xa0761d6478bd642f | 1)
+        flowers = (0..<(width * height / 4000)).map { _ in
+            let x = flowerRng.unit() * w
+            let gy = groundY[near * width + min(Int(x), width - 1)]
+            let t = flowerRng.unit()
+            return (x, gy + 3 + t * (h - gy - 3), (0.5 + 1.1 * t) * h / 1664, UInt32(flowerRng.next() >> 32))
+        }
+        // Fireflies, low over the meadow and along the trees.
+        var flyRng = SplitMix(state: UInt64(seed) &* 0xe7037ed1a0b428db | 1)
+        fireflies = (0..<90).map { _ in
+            let x = flyRng.unit() * w
+            let gy = groundY[near * width + min(Int(x), width - 1)]
+            let u = flyRng.unit()
+            return (x, gy - 0.05 * h * u * u + 0.03 * h * flyRng.unit(), 0.4 + 0.6 * flyRng.unit())
+        }
 
         // Ice in the cold air after snow ("diamond dust"): tiny points that
         // catch the light, the big near ones rarer. Drawn only after snow.
@@ -331,8 +398,19 @@ struct Scene {
     /// One frame as 8-bit sRGB RGBX, dithered. `salt` varies the dither per
     /// frame. Light follows the stylized `sun`; the moon, planets, stars and
     /// Milky Way stand where `sky` puts them.
-    func render(minute: Int, sun: SunModel, sky: Ephemeris, salt: UInt32, weather w: Weather = Weather(.clear)) -> [UInt8] {
-        let alt = sun.altitude(minute)
+    func render(minute: Int, sun: SunModel, sky: Ephemeris, season: Season, meteors: (radiant: Vec3, count: Int)? = nil,
+                life: Life = Life(), salt: UInt32, weather w: Weather = Weather(.clear)) -> [UInt8] {
+        let sunAlt = sun.altitude(minute)
+        // A solar eclipse: the moon's disk over the sun's, as seen from here.
+        // The eye hardly notices the light failing until the sun is nearly
+        // covered; then the sky darkens as in twilight. From here on `alt` is
+        // the sun the light comes from, `sunAlt` where it stands.
+        let sunMoon = Float(sky.moon.angle(sky.sun)), sunRadius = Float(sky.sunRadius), moonRadius = Float(sky.moonRadius)
+        let covered = sunMoon < sunRadius + moonRadius
+            ? diskOverlap(moonRadius / sunRadius, apart: sunMoon / sunRadius) : 0
+        let uncovered = max(1 - covered, 1e-4)
+        let alt = covered > 0
+            ? min(sunAlt, uncovered < 0.1 ? max(6 + 6 * log10f(uncovered / 0.1), -7) : 6 + 30 * log10f(uncovered / 0.1)) : sunAlt
         let dayPhase = sun.dayPhase(minute)
         let evening = dayPhase.map { $0 >= 0.5 } ?? (sun.nightPhase(minute) < 0.5)
         let clear = 1 - w.overcast  // how much of the sky shows
@@ -364,7 +442,11 @@ struct Scene {
         // Only while it's in the picture does it dim the faint stars and the
         // Milky Way; out of it, the night stays full of stars and the land
         // keeps a little of its light.
-        let moonLight = powf(moonLit, 1.5) * smoothstep(-1, 20, moon.alt) * smoothstep(-5, -14, alt) * clear
+        // In a lunar eclipse the Earth's shadow, 0.70° across the umbra and
+        // 1.25° the penumbra, falls on it; in totality its light goes out.
+        let shadowSep = Float(sky.moonFromCenter.angle(sky.sun * -1))
+        let totality = smoothstep(1.0, 0.44, shadowSep)
+        let moonLight = powf(moonLit, 1.5) * smoothstep(-1, 20, moon.alt) * smoothstep(-5, -14, alt) * clear * (1 - 0.9 * totality)
         let inView = smoothstep(-8 * ppd, 0, moon.x) * smoothstep(W + 8 * ppd, W, moon.x) * smoothstep(-1, 2, moon.alt)
         let moonShown = moonLight * inView
         var pal = palette(alt: alt, evening: evening)
@@ -376,13 +458,28 @@ struct Scene {
         // waits at its side. Cloud and fog veil its disk and glow.
         let veil = (1 - 0.85 * w.overcast) * (1 - 0.5 * w.fog)
         let p = dayPhase ?? (evening ? 1 : 0)
-        let sunX = W * (0.5 + (p - 0.5) * 0.8 * side), sunY = horizonY - alt / sun.peak * span
+        let sunX = W * (0.5 + (p - 0.5) * 0.8 * side), sunY = horizonY - sunAlt / sun.peak * span
         let sunR = 0.021 * H
-        let sunVis = smoothstep(-1.5, 0.5, alt) * (1 - w.overcast) * (1 - 0.5 * w.fog)
-        let sunColor = mix(pal.glow * 1.6, RGB(1, 0.97, 0.9) * 1.4, smoothstep(2, 20, alt))
+        let sunVis = smoothstep(-1.5, 0.5, sunAlt) * (1 - w.overcast) * (1 - 0.5 * w.fog)
+        let sunColor = mix(palette(alt: sunAlt, evening: evening).glow * 1.6, RGB(1, 0.97, 0.9) * 1.4, smoothstep(2, 20, sunAlt))
+        // The moon's disk in front of the drawn sun, at the drawn sun's scale,
+        // turned as the real one stands on the sky; in totality the corona.
+        var bite: (x: Float, y: Float, r: Float)?
+        if covered > 0 {
+            let (saz, sal) = (atan2(sky.sun.x, sky.sun.y), asin(sky.sun.z))
+            let t = sky.moon - sky.sun * sky.moon.dot(sky.sun)
+            let (a, b) = (Float(t.dot(Vec3(cos(saz), -sin(saz), 0))),
+                          Float(t.dot(Vec3(-sin(sal) * sin(saz), -sin(sal) * cos(saz), cos(sal)))))
+            let n = max((a * a + b * b).squareRoot(), 1e-9), apart = sunMoon / sunRadius * sunR
+            bite = (sunX + a / n * apart, sunY - b / n * apart, moonRadius / sunRadius * sunR)
+        }
+        let corona = smoothstep(0.97, 1, covered) * sunVis
+        // What's left of a low sun reads as a deep orange sickle, as in photographs.
+        let eclipsedSun = mixOklab(sunColor, RGB(1.25, 0.62, 0.22), 0.7 * (1 - smoothstep(5, 25, sunAlt)))
         let low = smoothstep(-8, -1, alt) * (1 - smoothstep(4, 20, alt))
         let day = smoothstep(0, 15, alt)
-        let (gNear, gFar, gBand) = ((0.44 * low + 0.28 * day) * veil, (0.40 * low + 0.10 * day) * veil, 0.30 * low * veil)
+        // The glare close around the sun shrinks with what the moon leaves of it.
+        let (gNear, gFar, gBand) = ((0.44 * low + 0.28 * day) * veil * (0.2 + 0.8 * uncovered), (0.40 * low + 0.10 * day) * veil, 0.30 * low * veil)
         let (rNear, rFar, bandH, bandW) = (0.06 * H, 0.32 * H, 0.07 * H, 0.55 * W)
 
         // The moon, where it is, lit from where the sun is: pale by day; by
@@ -391,10 +488,10 @@ struct Scene {
         // Low over the horizon it looks bigger, as the real one seems to: up
         // to 67% wider, back to its usual size by 30°.
         let moonR = 0.013 * H * (1 + 0.67 * (1 - smoothstep(2, 30, moon.alt)))
-        let moonVis = (1 - 0.95 * w.overcast) * (1 - 0.5 * w.fog) * smoothstep(-1.5, -0.5, moon.alt)
+        let moonVis = (1 - 0.95 * w.overcast) * (1 - 0.5 * w.fog) * smoothstep(-1.5, -0.5, moon.alt) * smoothstep(3, 5, sunMoon)
         let opaque = smoothstep(6, -6, alt)
         let moonGain = 0.3 + 0.7 * opaque
-        let haloGain = 0.05 * powf(moonLit, 1.3) * opaque * moonVis
+        let haloGain = 0.05 * powf(moonLit, 1.3) * opaque * moonVis * (1 - 0.85 * totality)
         let earthshine = 0.025 * (1 - moonLit) * (1 - moonLit) * opaque
         let moonColor = RGB(hex: 0xf3efe0), moonGlow = RGB(hex: 0x9fb4d8)
         // Directions on the sky at the moon, as screen x and y (up): its north
@@ -409,6 +506,9 @@ struct Scene {
         let toSun = toward(sky.sun), north = toward(sky.eclipticPole), west = (x: north.y, y: -north.x)
         let phase = Float(sky.moonPhaseAngle * .pi / 180)
         let light = (x: toSun.x * sinf(phase), y: toSun.y * sinf(phase), z: cosf(phase))
+        // The shadow's center, in moon radii (the moon is 0.26° across its radius) from the moon's.
+        let shadow = shadowSep < 1.6 ? (x: -toSun.x * shadowSep / 0.26, y: -toSun.y * shadowSep / 0.26) : nil
+        let copper = RGB(hex: 0xb5502a)
 
         // Stars and planets: as many as the dark, the moon and the air let
         // through. About magnitude 6 at full night; by day, only Venus, faint.
@@ -456,6 +556,33 @@ struct Scene {
         }
         if limit > -1.6 { for star in Star.catalog { point(sky.fromJ2000.apply(star.direction), star.magnitude, star.bv) } }
         for planet in sky.planets { point(planet.direction, Float(planet.magnitude), Float(planet.bv)) }
+        // A meteor shower's peak night: streaks fanning out from its real
+        // radiant, more the higher it stands, few under a bright moon.
+        let meteorSeen = smoothstep(-12, -18, alt) * clear * (1 - 0.7 * moonShown)
+        if let shower = meteors, meteorSeen > 0 {
+            let radiant = sky.fromJ2000.apply(shower.radiant)
+            let n = Int((Float(shower.count) * min(max(0.3 + 0.7 * Float(radiant.z), 0.2), 1)).rounded())
+            var rng = SplitMix(state: UInt64(salt) &* 0x2545f4914f6cdd1d | 1)
+            var drawn = 0
+            for _ in 0..<400 where drawn < n {
+                let z = 2 * rng.unit() - 1, a = 2 * Float.pi * rng.unit()
+                let p = Vec3(Double((1 - z * z).squareRoot() * cosf(a)), Double((1 - z * z).squareRoot() * sinf(a)), Double(z))
+                let from = p.angle(radiant)
+                guard p.z > 0.2, from > 15, from < 70 else { continue }
+                let away = (p * p.dot(radiant) - radiant).unit  // along the sky, away from the radiant
+                let length = Double(3 + 8 * rng.unit()) * .pi / 180
+                let (s0, s1) = (screen(p), screen((p + away * length).unit))
+                guard s0.x > 0, s0.x < W, s1.x > 0, s1.x < W, s1.y > 0 else { continue }
+                let bright = (0.04 + 0.12 * rng.unit() * rng.unit()) * meteorSeen
+                let steps = max(Int(((s1.x - s0.x) * (s1.x - s0.x) + (s1.y - s0.y) * (s1.y - s0.y)).squareRoot() * 2), 1)
+                for k in 0...steps {
+                    let t = Float(k) / Float(steps)
+                    splat(s0.x + (s1.x - s0.x) * t, s0.y + (s1.y - s0.y) * t, bright * powf(max(sinf(.pi * t), 0), 0.6) * (0.4 + 0.6 * t),
+                          max(0.45 * scale, 0.6), 0)
+                }
+                drawn += 1
+            }
+        }
         let starColors = (0..<256).map { starColor(Float($0) / 255 * 2.4 - 0.4) }
 
         // The Milky Way and the zodiacal light, on a grid of sky directions
@@ -556,7 +683,7 @@ struct Scene {
             let byMoon = alt < -4
             let (fromX, fromUp): (Float, Float) = byMoon
                 ? (clamp01((moon.x - w2) / w2 + 1) * 2 - 1, max(moon.alt, 3))
-                : (clamp01((sunX - w2) / w2 + 1) * 2 - 1, max(alt, 3))
+                : (clamp01((sunX - w2) / w2 + 1) * 2 - 1, max(sunAlt, 3))
             let (sinUp, cosUp) = (sinf(fromUp * .pi / 180), cosf(fromUp * .pi / 180))
             let ln = (fromX * cosUp * fromX * cosUp + sinUp * sinUp + 0.36 * cosUp * cosUp).squareRoot()
             let toLight = (x: fromX * cosUp / ln, y: sinUp / ln, z: 0.6 * cosUp / ln)  // z: away from us
@@ -627,7 +754,7 @@ struct Scene {
         let bowGain = 0.38 * w.wet * smoothstep(-0.5, 3, alt) * (1 - smoothstep(30, 41, alt))
         let bowR = 0.78 * H
         let bowX = sunX > 0.5 * W ? -0.22 * W : 1.22 * W
-        let bowY = horizonY + (0.12 + 0.5 * clamp01(alt / 42)) * H
+        let bowY = horizonY + (0.12 + 0.5 * clamp01(sunAlt / 42)) * H
         let glintGain = w.wet * smoothstep(-2, 4, alt) * (0.6 + 0.4 * (1 - smoothstep(10, 35, alt)))
         let hues: [RGB] = w.wet > 0 ? (0..<256).map { spectrum(Float($0) / 255) } : []
         let gradient: [RGB] = (0..<height).map { y in
@@ -648,6 +775,83 @@ struct Scene {
         let windowColor = RGB(hex: 0xffb35c) * 1.3
         let (wx0, wx1, wy0, wy1) = cabin.window
         let (windowX, windowY) = ((wx0 + wx1) / 2, (wy0 + wy1) / 2)
+
+        // The seasons: the summit's snow line, and snow on the rocky range's
+        // peaks when it's low; snow and frost on the land, and once it has
+        // snowed, on branch tops and the roof; leafy trees fresh, green, in
+        // autumn's colors or bare; the fruit trees in blossom, then with apples.
+        let snowFoot = 0.70 * H  // the summit's foot, behind the rocky range
+        let snowAt = snowFoot - season.snowLine * (snowFoot - summitTop)
+        let rangeSnow = smoothstep(0.35, 0.1, season.snowLine)
+        let rangeTop = ground[width..<(2 * width)].sorted()[width / 5]  // its higher crests, not one outlier
+        let groundSnow = max(w.snow, season.snowCover)
+        let daylight = smoothstep(-6, 6, alt)
+        let lightLevel = clamp01(luminance(mixOklab(pal.mid, pal.glow, 0.3)) * 1.4)
+        // Colors laid into the landscape take its light and its air: each is
+        // drawn partway to its layer's tone, so a leaf, a flower or a bike
+        // belongs to the hill it's on, and more so the farther off.
+        func inLayer(_ c: RGB, _ l: Int, _ tone: RGB? = nil) -> RGB {
+            mixOklab(tone ?? tones[l], c * lightLevel, 0.6 * (1 - 0.6 * Self.layers[l].haze))
+        }
+        let apple = RGB(hex: 0xc8302a)
+        let snowAbove = max(Int((2.5 * scale).rounded()), 1)  // how far above a branch to look for open air: how deep the snow
+        let snowOnTop = mix(snowGround, RGB(1, 1, 1), 0.3)
+        let frostColor = mixOklab(pal.mid, RGB(1, 1, 1), 0.55) * 1.1
+        let frostGlint = season.frost * smoothstep(-2, 4, alt) * 0.7
+
+        // Small things in front of the near hill: flowers in their season,
+        // fireflies on warm midsummer nights.
+        let near = layerCount - 1
+        var nearOverlay = Overlay(x0: 0, y0: max(Int(ground[(near * width)..<((near + 1) * width)].min()! - 0.16 * H), 0),
+                                  x1: width, y1: height)
+        let bloom = season.flowers * (1 - groundSnow)
+        if bloom > 0 && daylight > 0 {
+            let colors = season.flowerColors.map { inLayer(RGB(hex: $0), near) }
+            for f in flowers where unit(f.n) < bloom {
+                nearOverlay.circle(f.x, f.y, f.r, colors[Int(f.n >> 3) % colors.count], alpha: daylight)
+            }
+        }
+        let fireflyGain = season.fireflies * smoothstep(-6, -12, alt) * (1 - w.wet)
+        if fireflyGain > 0 {
+            let flyColor = RGB(hex: 0xd4ff6a)
+            for f in fireflies {
+                nearOverlay.glow(f.x, f.y, max(0.9 * scale, 0.7), flyColor * (0.5 * f.k * fireflyGain))
+                nearOverlay.glow(f.x, f.y, 3.5 * scale, flyColor * (0.04 * f.k * fireflyGain))
+            }
+        }
+        // The cabin's things. The bikes stay home unless their riders are out.
+        let lit = { (hex: UInt32) -> RGB in inLayer(RGB(hex: hex), near) }
+        let panelGlint = smoothstep(25, 3, alt) * smoothstep(-1, 2, alt) * (sunX < cabin.x ? 1 : 0.3) * (1 - w.overcast)
+        drawCabinThings(&nearOverlay, cabin: cabin, H: H, snow: groundSnow, lit: lit, sky: pal.mid,
+                        glint: panelGlint, bikesHome: life.bikesHome)
+        // The two of them, when they're out, and whoever's visiting (Life.swift).
+        func ridge(_ x: Float) -> Float { ground[near * width + min(max(Int(x), 0), width - 1)] }
+        func clearing(_ x0: Float, _ half: Float) -> Float {
+            // The nearest place where no tree stands on the ridge, away from the cabin.
+            let rows = Int(0.04 * H)
+            func open(_ x: Float) -> Bool {
+                guard x > 0.04 * W, x < 0.96 * W, abs(x - cabin.x) > 2.5 * cabin.halfWidth + half else { return false }
+                for cx in stride(from: Int(x - half), through: Int(x + half), by: 2) {
+                    let gy = Int(ridge(Float(cx)))
+                    for y in stride(from: max(gy - rows, 0), to: gy, by: 2) where trees[(near * height + y) * width + cx] > 40 { return false }
+                }
+                return true
+            }
+            for step in 0..<Int(16 * cabin.halfWidth / half) {  // within four cabin widths
+                for dir: Float in [1, -1] where open(x0 + dir * Float(step) * half * 0.5) { return x0 + dir * Float(step) * half * 0.5 }
+            }
+            return .nan  // none: they stay on the meadow
+        }
+        life.draw(&nearOverlay, cabin: cabin, H: H, width: W, year: season.year, snowy: groundSnow > 0.3,
+                  ground: ridge, clearing: clearing, lit: lit, lamp: windowLight)
+        let skyBirds = life.drawSky(width: W, H: H, color: mixOklab(pal.land * 0.7, pal.mid, 0.3))
+        // Fallen leaves on the ground around the leafy trees, gathering as
+        // the trees let them go, browning through winter, until snow covers
+        // them or spring's grass grows over them.
+        let carpetGain = (season.year > 0.75 ? 1 : 1 - smoothstep(0.18, 0.30, season.year)) * (1 - groundSnow)
+        let carpetBrown = season.year > 0.75 ? 0.6 * smoothstep(0.86, 1, season.year) : 0.6 + 0.3 * smoothstep(0, 0.2, season.year)
+        let carpetCell = (0..<layerCount).map { max(Int((0.0016 * H * Self.layers[$0].trees / Self.layers[near].trees).rounded()), 1) }
+        let overNear = nearOverlay
 
         var out = [UInt8](repeating: 255, count: width * height * 4)
         out.withUnsafeMutableBufferPointer { buf in
@@ -677,8 +881,26 @@ struct Scene {
                         if s > 0 { c = c + starColors[Int(clamp01((starBV[y * width + x] / s + 0.4) / 2.4) * 255)] * s }
                     }
                     if sunVis > 0 {
-                        let cov = clamp01(sunR - d + 0.5) * sunVis
-                        if cov > 0 { c = mix(c, sunColor, cov) }
+                        var cov = clamp01(sunR - d + 0.5) * sunVis
+                        if let b = bite {
+                            let bd = ((fx - b.x) * (fx - b.x) + (fy - b.y) * (fy - b.y)).squareRoot()
+                            let inside = clamp01(b.r - bd + 0.5) * sunVis
+                            cov *= 1 - inside
+                            // Where it covers the sun the moon's disk shows dark against
+                            // the glare; off the sun it can't be seen.
+                            let bitten = inside * clamp01(sunR - d + 0.5)
+                            c = c + pal.glow * (-(gNear * expf(-d / rNear) + 0.5 * gFar * expf(-d / rFar)) * bitten)
+                            if corona > 0 {
+                                // Pearly streamers around the black disk, uneven, the longest
+                                // reaching out a few radii.
+                                let a = atan2f(fy - b.y, fx - b.x)
+                                let ray = 0.55 + 0.25 * sinf(2 * a + 1.3) + 0.12 * sinf(5 * a + 0.4) + 0.08 * sinf(11 * a + 2.1)
+                                let out = max(bd - b.r, 0)
+                                c = c + RGB(0.85, 0.88, 1) * (corona * 0.8 * ray * expf(-out / (sunR * (0.15 + 0.6 * ray))) * (1 - inside))
+                                c = mix(c, c * 0.15, corona * inside)
+                            }
+                        }
+                        if cov > 0 { c = mix(c, bite == nil ? sunColor : eclipsedSun, cov) }
                     }
                     if moonVis > 0 {
                         let mx = fx - moon.x, my = fy - moon.y
@@ -694,9 +916,16 @@ struct Scene {
                             let mu = max(dx * light.x + dy * light.y + z * light.z, 0)
                             let lit = 2 * mu / (mu + max(z, 0.25))  // the floor keeps the rim from flaring
                             let albedo = moonAlbedo(dx * west.x + dy * west.y, dx * north.x + dy * north.y)
-                            c = mix(c, air + halo, disk * opaque) + moonColor * (albedo * (lit * moonGain + earthshine) * disk)
+                            var surface = moonColor * (albedo * (lit * moonGain + earthshine))
+                            if let s = shadow {
+                                let d = ((dx - s.x) * (dx - s.x) + (dy - s.y) * (dy - s.y)).squareRoot()
+                                let umbra = smoothstep(2.85, 2.55, d), penumbra = smoothstep(4.8, 2.7, d)
+                                surface = surface * ((1 - 0.5 * penumbra) * (1 - 0.97 * umbra)) + copper * (0.06 * umbra * albedo * moonGain)
+                            }
+                            c = mix(c, air + halo, disk * opaque) + surface * disk
                         }
                     }
+                    if let b = skyBirds { c = b.over(c, x, y) }
                     if w.fog > 0 {
                         c = mix(c, fogColor, w.fog * 0.6 * smoothstep(0.3 * H, horizonY, fy))
                     }
@@ -719,15 +948,93 @@ struct Scene {
                         var land: Float = 0
                         for s in 0..<sub { land += clamp01(fy - top[t0 + s] + 0.5) }
                         land /= Float(sub)
-                        let tree = Float(trees[(l * height + y) * width + x]) / 255
+                        let spruceCov = Float(trees[(l * height + y) * width + x]) / 255  // spruces, limbs, the porch
+                        // Leafy trees: their foliage as the season has it (Trees.swift).
+                        var leafCov: Float = 0, leafColor = RGB(0, 0, 0), inFruitTree = false, birch = false
+                        if l >= 2 {
+                            let li = ((l - 2) * height + y) * width + x
+                            birch = leafShade[li] & 0x20 != 0
+                            if leaves[li] > 0 {
+                                inFruitTree = leafInfo[li] >> 5 == 5
+                                let look = leafLook(shade: leafShade[li], info: leafInfo[li], season: season, x: x, y: y, H: H)
+                                (leafCov, leafColor) = (Float(leaves[li]) / 255 * look.presence, look.color)
+                            }
+                        }
+                        let tree = max(spruceCov, leafCov)
                         let cov = max(land, tree)
                         if cov == 0 { continue }
                         let layer = Self.layers[l]
                         let gy = ground[l * width + x]
                         var tone = mix(tones[l], fog, layer.mist * smoothstep(0, mistDepth, fy - gy))
                         if tree > 0 { tone = tone * (1 - 0.18 * (1 - layer.haze) * tree) }  // spruce darker than meadow
+                        if birch && spruceCov > 0 {
+                            // Birch bark: paper white, lit on its left, with dark lenticels across it.
+                            let row = (l * height + y) * width
+                            let across = x > 0 && x < width - 1 ? Float(Int(trees[row + x + 1]) - Int(trees[row + x - 1])) / 255 : 0
+                            var bark = RGB(hex: 0xe6e2d8) * (0.7 + 0.3 * across)
+                            if unit(hash32(UInt32(x / 3) &* 0x9e3779b1 ^ UInt32(y) &* 0x85ebca6b ^ 0xb1c4)) < 0.14 { bark = RGB(hex: 0x2e2a26) }
+                            tone = mix(tone, inLayer(bark, l, tone), spruceCov / tree)
+                        }
+                        if leafCov > 0 {
+                            var crown = leafColor
+                            if inFruitTree && season.fruit > 0 {  // apples, on the lit side
+                                let speck = hash32(UInt32(x / 2) &* 0x9e3779b1 ^ UInt32(y / 2) &* 0x85ebca6b ^ 0xb10550)
+                                if unit(speck) < 0.08 * season.fruit { crown = apple }
+                            }
+                            tone = mix(tone, inLayer(crown, l, tone), leafCov / tree)
+                        }
+                        if l >= 2 && carpetGain > 0 && fy >= gy && tree < 1 && litterBy[(l * width + x) * 4] >= 0 {
+                            // Fallen leaves: a flat, ragged pool around each trunk,
+                            // a leaf to each small cell, the floor tinted between;
+                            // on the near meadow a few blown far out from it.
+                            var amount: Float = 0, species = 0
+                            let ragged = 0.75 + 0.5 * valueNoise2(fx / (0.01 * H), fy / (0.004 * H), 0x4b1d)
+                            for k in 0..<4 {
+                                let i = Int(litterBy[(l * width + x) * 4 + k])
+                                guard i >= 0 else { continue }
+                                let t = leafy[i]
+                                let gone = (season.year > 0.75 ? leafFall(season, species: t.species) : 1) * carpetGain
+                                let (u, v) = ((fx - t.x) / (1.5 * t.rx * ragged), (fy - t.base) / ((l == near ? 0.3 : 0.15) * t.rx * ragged))
+                                var a = gone * expf(-(u * u + v * v))
+                                if l == near && fy > t.base {
+                                    a = max(a, 0.18 * gone * expf(-abs(u) / 3 - (fy - t.base) / (0.06 * H))
+                                        * smoothstep(5.5, 3.5, abs(fx - t.x) / t.rx))
+                                }
+                                if a > amount { (amount, species) = (a, t.species) }
+                            }
+                            if amount > 0.01 {
+                                let cs = carpetCell[l]
+                                let h1 = hash32(UInt32(x / cs) &* 0x9e3779b1 ^ UInt32(y * 5 / (3 * cs)) &* 0x85ebca6b ^ 0x1ea7)
+                                let path = leafPaths[species]
+                                var leaf = mixOklab(RGB(hex: path[path.count - 1 - Int(h1 >> 8) % 2]), RGB(hex: 0x6a4a32), carpetBrown)
+                                leaf = leaf * (0.8 + 0.4 * unit(h1 >> 3))
+                                let k = unit(h1) < amount * 1.3 ? 1 : 0.5 * amount * amount
+                                tone = mix(tone, inLayer(leaf, l, tone), k * (1 - tree))
+                            }
+                        }
+                        if groundSnow > 0 && tree > 0.3 {
+                            // Snow settled on the tops of branches: tree here, open air just above.
+                            var above: Float = 0
+                            if y >= snowAbove {
+                                above = Float(trees[(l * height + y - snowAbove) * width + x]) / 255
+                                if l >= 2 { above = max(above, Float(leaves[((l - 2) * height + y - snowAbove) * width + x]) / 255 * season.leafFill) }
+                            }
+                            tone = mix(tone, mix(snowOnTop, fog, layer.haze * 0.5), 0.85 * groundSnow * clamp01(tree - above))
+                        }
+                        if groundSnow > 0 && l == near && abs(fx - cabin.x) < 1.1 * cabin.halfWidth && land > 0 {
+                            // And on the roof.
+                            let depth = fy - top[(l * width + x) * sub + sub / 2]
+                            tone = mix(tone, snowOnTop, 0.9 * groundSnow * smoothstep(0.005 * H, 0.003 * H, depth))
+                        }
+                        if l == 1 && rangeSnow > 0 {
+                            // Snow on the rocky range's higher peaks when the snow line is low.
+                            let line = rangeTop + 0.04 * H * rangeSnow + 1.5 * snowLine[x]
+                            let amount = smoothstep(line + 3, line - 3, fy)
+                            if amount > 0 { tone = mix(tone, mix(snowLight, fog, layer.haze * 0.55), amount) }
+                        }
                         if layer.snow {
-                            let amount = smoothstep(snowLine[x] + 3, snowLine[x] - 3, fy)
+                            let line = snowAt + snowLine[x]
+                            let amount = smoothstep(line + 3, line - 3, fy)
                             if amount > 0 {
                                 // Snow faces turned to the sun are brighter: the face
                                 // normal against the direction to the sun.
@@ -738,9 +1045,12 @@ struct Scene {
                                 tone = mix(tone, snow, amount)
                             }
                         }
-                        if w.snow > 0 && !layer.snow && fy >= gy {
-                            // Fresh snow on open ground; the trees stay dark.
-                            tone = mix(tone, mix(snowGround, fog, layer.haze * 0.5), 0.75 * w.snow * (1 - tree))
+                        if groundSnow > 0 && !layer.snow && fy >= gy {
+                            // Snow on open ground; the trees stay dark.
+                            tone = mix(tone, mix(snowGround, fog, layer.haze * 0.5), 0.75 * groundSnow * (1 - tree))
+                        }
+                        if season.frost > 0 && l >= 2 && fy >= gy {
+                            tone = mix(tone, mix(frostColor, fog, layer.haze * 0.5), 0.35 * season.frost * (1 - tree))  // hoarfrost
                         }
                         if w.fog > 0 {
                             tone = mix(tone, fogColor, w.fog * (0.9 - 0.12 * Float(l)))
@@ -762,6 +1072,7 @@ struct Scene {
                         c = cov == 1 ? tone : mix(c, tone, cov)
                         frontTree = frontTree * (1 - cov) + tree
                     }
+                    c = overNear.over(c, x, y)
                     if seaRows > 0 {
                         // A faint haze of light over the sea's top.
                         let above = seaTopY[x] - fy
@@ -782,6 +1093,11 @@ struct Scene {
                         // On open ground only: not on the trees or the porch.
                         let p = glintPower[y * width + x] * (1 - min(frontTree, 1))
                         if p > 0 { c = c + hues[Int(glintHue[y * width + x])] * (p * glintGain) }
+                    }
+                    if frostGlint > 0 {
+                        // Hoarfrost catching the low sun.
+                        let p = glintPower[y * width + x] * (1 - min(frontTree, 1))
+                        if p > 0 { c = c + RGB(0.9, 0.95, 1) * (p * frostGlint) }
                     }
 
                     if windowLight > 0 {
@@ -891,4 +1207,13 @@ func stamp(_ caps: [Capsule], into cover: inout [UInt8], plane: Int, width: Int,
     let a = hash32(h), b = hash32(a ^ 0x68bc21eb)
     let s = linearToSrgb(shoulder) * 255 + unit(a) + unit(b) - 1
     return UInt8(min(max(s.rounded(), 0), 255))
+}
+
+/// How much of a unit disk another disk of radius `r` covers, its center
+/// `apart` away: 0…1.
+func diskOverlap(_ r: Float, apart d: Float) -> Float {
+    if d >= 1 + r { return 0 }
+    if d <= abs(1 - r) { return min(r * r, 1) }
+    let a = acosf(max(-1, min(1, (d * d + 1 - r * r) / (2 * d)))), b = acosf(max(-1, min(1, (d * d + r * r - 1) / (2 * d * r))))
+    return (a + r * r * b - 0.5 * ((-d + 1 + r) * (d + 1 - r) * (d - 1 + r) * (d + 1 + r)).squareRoot()) / .pi
 }

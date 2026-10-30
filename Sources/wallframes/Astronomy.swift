@@ -92,6 +92,8 @@ struct Ephemeris {
     let sun: Vec3              // horizontal directions
     let moon: Vec3             // as seen from here: parallax shifts it up to 1°
     let moonFromCenter: Vec3   // as seen from the Earth's center, for eclipse geometry
+    let moonRadius: Double     // apparent, degrees, from here
+    let sunRadius: Double      // apparent, degrees
     let sunLongitude: Double   // ecliptic, degrees
     let moonPhaseAngle: Double // sun–moon–observer, degrees: 0 full, 180 new
     let eclipticPole: Vec3     // horizontal; the moon's axis stays within 1.5° of it
@@ -145,7 +147,10 @@ struct Ephemeris {
         toEcliptic = fromEcliptic.transposed
         sun = fromEcliptic.apply(sunEcl).unit
         moonFromCenter = fromEcliptic.apply(moonEcl).unit
-        moon = (fromEcliptic.apply(moonEcl) - Vec3(0, 0, 1)).unit  // the observer stands one Earth radius up
+        let fromHere = fromEcliptic.apply(moonEcl) - Vec3(0, 0, 1)  // the observer stands one Earth radius up
+        moon = fromHere.unit
+        moonRadius = asin(0.2725 / fromHere.length) / rad
+        sunRadius = 0.2666 / sunEcl.length
         sunLongitude = sunEcl.lon
         let earthRadiiPerAU = 23454.8
         moonPhaseAngle = (sunEcl * earthRadiiPerAU - moonEcl).angle(moonEcl * -1)
@@ -228,4 +233,30 @@ struct Star {
             return (toJ2000.apply(Vec3(lon: Double(l), lat: Double(b))), light, 1.4 * rng.unit())
         }
     }()
+}
+
+/// The day's eclipse, if one is seen from here: a solar one with the sun
+/// up, or a lunar one with the moon up and in the Earth's umbra (the
+/// penumbra alone barely shows) while the sun is down. Its local minute of
+/// greatest phase as seen from here, found to the minute.
+func eclipse(year: Int, month: Int, day: Int, utcOffset: Int, latitude: Double, longitude: Double) -> (minute: Int, solar: Bool)? {
+    func depth(_ minute: Int) -> (solar: Double, lunar: Double) {  // > 0 when eclipsed and seen
+        let sky = Ephemeris(latitude: latitude, longitude: longitude,
+                            d: Ephemeris.dayNumber(year: year, month: month, day: day, minutesUT: Double(minute - utcOffset)))
+        let solar = sky.sun.z > 0 ? sky.sunRadius + sky.moonRadius - sky.moon.angle(sky.sun) : -1
+        let lunar = sky.moon.z > 0 && sky.sun.z < 0 ? 0.70 + 0.26 - sky.moonFromCenter.angle(sky.sun * -1) : -1
+        return (solar, lunar)
+    }
+    var best: (minute: Int, solar: Bool, depth: Double)?
+    for coarse in stride(from: 0, to: 1440, by: 10) {
+        let d = depth(coarse)
+        guard max(d.solar, d.lunar) > -0.3 else { continue }  // near enough to look closer
+        for minute in max(coarse - 10, 0)...min(coarse + 10, 1439) {
+            let d = depth(minute)
+            for (solar, x) in [(true, d.solar), (false, d.lunar)] where x > 0 && x > (best?.depth ?? 0) {
+                best = (minute, solar, x)
+            }
+        }
+    }
+    return best.map { ($0.minute, $0.solar) }
 }

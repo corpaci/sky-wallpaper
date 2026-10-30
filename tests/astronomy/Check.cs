@@ -63,5 +63,18 @@ static class Check
         Vec3 gc = berlin.ToGalactic.Apply(berlin.FromJ2000.Apply(Vec3.FromLonLat(266.405, -28.936)));
         Say("galactic-center-l", gc.Lon); Say("galactic-center-b", gc.Lat);
         Say("stars", Star.Catalog.Length);
+
+        EclipseSeen("eclipse-dallas-2024", 2024, 4, 8, 32.78, -96.80);
+        EclipseSeen("eclipse-berlin-2028", 2028, 12, 31, 52.52, 13.40);
+        EclipseSeen("eclipse-berlin-none", 2026, 10, 29, 52.52, 13.40);
+    }
+
+    /// The eclipse finder: the minute of greatest eclipse seen from a place, in
+    /// hours UT, and whether it's solar (1) or lunar (0); -1 on a day without one.
+    static void EclipseSeen(string name, int y, int m, int d, double lat, double lon)
+    {
+        Eclipse e = Eclipse.Find(y, m, d, 0, lat, lon);
+        Say(name + "-ut", e == null ? -1 : e.Minute / 60.0);
+        Say(name + "-solar", e == null ? -1 : e.Solar ? 1 : 0);
     }
 }

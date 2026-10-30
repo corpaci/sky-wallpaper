@@ -12,7 +12,9 @@ sunrise and sunset. The night sky turns 15° an hour, so at night more frames
 go in until none shows for over two hours, and one goes at 00:00, so the
 small hours show this day's moon rather than the last frame's. That makes 17
 to 19 in Vienna, depending on the season. Each frame's sky is drawn for the
-middle of the time it shows. Colors are blended in OKLab and dithered to 8 bits so slow
+middle of the time it shows. On a day with an eclipse seen from here, one
+more frame goes at its greatest phase (or the frame within two minutes of it
+moves there), its sky drawn for that very minute. Colors are blended in OKLab and dithered to 8 bits so slow
 gradients don't band. Rendering is deterministic: two runs with the same
 inputs produce byte-identical PNGs (checked for both renderers, and from a
 fresh clone). The HEIC is not byte-identical between packs of the same
@@ -41,6 +43,65 @@ spruce is built from tapered capsules:
 
 Trees are slightly darker than the meadow behind them, and snow whitens only
 open ground.
+
+**Leafy trees** (`Trees.swift`). On the three wooded hills, three trees in
+ten are leafy; two fruit trees stand by the cabin. Each is grown the way a
+painter builds one, gesture first:
+- a trunk on a root flare, bending as it rises; limbs from its top (or, in
+  birch and linden, branches up a stem that runs through the crown), forking
+  down to twigs, every fork as thick in all as its parent (Leonardo's rule);
+- a growth table per species sets trunk length and thickness, crookedness,
+  limb spread, how much limbs turn back upward, how much they wander, and
+  hanging twigs; each tree varies within it (lean and a curve back up, a
+  twin stem in one tree in five);
+- foliage as clumps at the forks, each a cluster of round lobes with a
+  wobbling leafy edge, lit from the upper left in four flat bands, darker
+  deep in the crown, with gaps where branches show;
+- birch bark white on the stem and big limbs, black and fissured at the
+  foot, with dark lenticels.
+
+Coverage goes into planes of their own, with each pixel's light band,
+height in the crown, species and distance from the crown's middle, so the
+season can be applied per pixel at render time.
+
+**Seasons** (`Seasons.swift`, `leafLook`). The year phase runs from 1 January
+north of the equator, 1 July south of it. Leaves unfold all over at once in
+April, lower ones a little sooner, pale yellow-green darkening into summer.
+In autumn the turning runs through the crown as a wave from the top down
+(Zahnd et al. 2023), outer leaves first except in birch (Koike 1990), with
+patches running ahead branch by branch; each leaf follows its species'
+colors, and the first to turn fall first, a few at a time all over the crown,
+some twigs holding on. Oak and beech keep low dead leaves until spring
+(marcescence). Fallen leaves lie in a flat ragged pool around each trunk,
+blow out over the near meadow, and brown through winter; spring grass covers
+them by mid-April. The summit's snow line is a cosine over the year, or,
+with a forecast, the day's median freezing level (summit 1000–3500 m, snow
+lying 200 m below it). Snow cover comes from the forecast's snow depth, and
+hoarfrost from temperatures below freezing before 11:00. Colors that come
+into the landscape are drawn 60% of the way from the layer's own tone,
+less on far layers, so they take its light and haze.
+
+**Life** (`Life.swift`). Each day's plan is drawn from the date's number:
+whether the two go out (one day in four; more on rainy days; always on a
+meteor shower's night), what they do, where along the hill, and which
+visitors come. Each activity and visitor has its window in the day (by the
+sun's phase or altitude), its season and its weather; the frame shows
+what of the plan falls on its minute. Figures are drawn as small antialiased
+shapes over the near hill (`Sprites.swift`), about two-thirds of the
+cabin's wall height; ridge scenes look for a gap between the trees within
+four cabin widths. Birds in the sky go behind the hills.
+
+**Rare nights.** Meteor showers: the seven major ones, from noon on their
+peak date to noon the next day, with streaks 3–11° long fanning out from the
+radiant, as many as 10 a frame with the radiant high, a third under a bright
+moon. Eclipses: `eclipse()` scans the day in 10-minute steps, then by the
+minute near any close approach; solar when the sun is up and the disks
+overlap (apparent radii from the true distances, the moon seen from the
+observer), lunar when the moon is up, the sun down and the moon within the
+umbra (0.70° plus its radius from the antisun). The drawn sun is stylized,
+so the moon's disk is drawn over it at its scale, turned as on the real
+sky; the light fails with the uncovered area (unnoticed above 90% of it,
+then down to twilight at totality), the glare shrinking with it.
 
 **Sunrise and sunset** come from NOAA's general solar position equations, for
 `--lat/--lon` and the date in the machine's time zone. The day is held
@@ -189,10 +250,21 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
 - **C# port.** It compiles with `-langversion:5`, the level of Windows'
   built-in compiler, in console and windowless builds, with no warnings.
   `windows/parity.sh` compares it with the Swift renderer for every sky and for
-  a real forecast day (`tests/forecast-berlin-2026-10-28.json`), and for
+  a real forecast day (`tests/forecast-berlin-2026-10-28.json`), for
   moonless July nights in Vienna and Sydney (the Milky Way, and the view
-  facing north). At worst, 0.013% of color values differ, by at most two steps out of 255. Schedules
-  are identical.
+  facing north), and for three rare days in Berlin: 2026-08-12 (a partial
+  solar eclipse at sunset, the Perseids, the two out stargazing),
+  2028-12-31 (a lunar eclipse) and 2026-05-27 (spring, a bear about). At
+  worst, 0.014% of color values differ, by at most two steps out of 255.
+  Schedules are identical. Also checked by hand (2026-10-30): the
+  Quadrantids' night, forced snow and rain days in winter, spring and
+  autumn, and the March geese; one rain night (2026-05-20) has a single
+  pixel off by 3, a bright point at the top edge, while the same clear night
+  matches.
+  - The port found a bug: at a meteor streak's last point the sine of π came
+    out a hair below zero, its power NaN, which could black out that point and
+    the stars beside it; Swift and Mono disagreed about the result. Both now
+    clamp it.
 - **What the night sky costs (2026-10-29).** One day at 3420×2224 for
   Vienna, before and after it:
 
@@ -204,6 +276,16 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
 
   The extra frames are the night's. A night frame takes about 1.3 MB,
   mostly the dither.
+- **What seasons, trees and life cost (2026-10-30).** One day at 3024×1964
+  for Berlin, 19 frames, before and after: 7.6 s → 8.1 s wall clock,
+  18 s → 25 s CPU, 181 MB → 240 MB peak memory (the leaf planes).
+- **How often someone's out.** A simulation of the frame schedule over
+  2026–2029 in Berlin, clear skies: the two are out in 2.8% of frames, on
+  about 100 days a year (stargazing 242 frames, strolls 222, hikes 116,
+  runs 110, rides 31); visitors in about 12% (deer 855, hares 586, foxes
+  359, a buzzard 294, hedgehogs 210, geese 196, roof birds 168, swallows
+  160, the bear 102). Skiing and rain walks need snow or rain, so they
+  didn't come up.
 - **Astronomy.** `tests/astronomy.sh` checks known events and makes the C#
   port print the same numbers as Swift to three decimals:
 
@@ -221,6 +303,18 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
 
   The hourly steps limit the times to the hour. The test keeps a tolerance
   for the rest.
+
+  The eclipse finder, seen from a place:
+
+  | Eclipse | Published greatest | Found |
+  |---|---|---|
+  | Total solar, Dallas, 2024-04-08 | 18:42 UT | 18:41 UT |
+  | Total lunar, 2028-12-31, from Berlin | 16:52 UT | 16:52 UT |
+  | Total lunar, 2025-09-07, from Berlin | 18:11 UT | 18:16 UT (the moon rising) |
+  | Partial solar, 2025-03-29, Berlin | about 11:18 UT, magnitude 0.24 | 11:20 UT, 0.22 |
+
+  Scanning 2025–2028 from Berlin found exactly the umbral eclipses seen
+  there; the penumbral ones are left out on purpose.
 - **Sunrise and sunset.** `tests/daylight.sh` compares both renderers with
   published times from Open-Meteo's archive:
   - Berlin winter and summer, Madrid, Sydney and Quito: all within 1 minute;
@@ -286,6 +380,14 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
     Re-setting the same file adds no copy.
 
 ## Not verified
+
+- **The figures and animals against real ones.** They're small shapes at
+  cabin scale, judged by eye only; nobody has checked the clothing reads as
+  intended on a real screen at its real size.
+- **The eclipse look.** The timing and geometry are checked (above); the
+  light during a deep partial eclipse is a guess from the visible area.
+- **Render time on Windows.** The extra 37% of CPU is measured on the Mac
+  only.
 
 - **The night sky against a real one.** The geometry is checked
   (above); the look isn't. The maria are placed by hand, the Milky Way is a
