@@ -120,7 +120,8 @@ struct Scene {
     }
 
     // Far to near: a snowcapped summit, a rocky middle range, then rounded
-    // wooded hills. The nearest hill carries the cabin.
+    // wooded hills. The nearest hill carries the cabin. The summit is terrain
+    // (Massif), so only its haze and mist are used from here.
     static let layers = [
         Layer(base: 0.600, amp: 0.120, freq: 1.3, haze: 0.66, mist: 0.25, ridged: true, snow: true, trees: 0, forest: 0),
         Layer(base: 0.680, amp: 0.060, freq: 2.2, haze: 0.48, mist: 0.30, ridged: true, snow: false, trees: 0, forest: 0),
@@ -151,10 +152,9 @@ struct Scene {
     private let leafy: [(l: Int, x: Float, base: Float, rx: Float, species: Int)]  // leafy trees, for their fallen leaves
     private let litterBy: [Int32]  // [(layer * width + x) * 4 + k] the four leafy trees whose leaves may lie here, or -1
     private let snowLine: [Float] // [x] the snow line's ragged edge, an offset from where the season puts it
-    private let summitTop: Float  // the summit's highest point, y
     private let flowers: [(x: Float, y: Float, r: Float, n: UInt32)]   // on the near meadow
     private let fireflies: [(x: Float, y: Float, k: Float)]            // over the near meadow, by the trees
-    private let snowSlope: [Float] // [x] its slope over ±3% of the height, so shading blends, not splits
+    private let massif: Massif     // the summit as terrain, lit per pixel
     let cabin: Cabin
     private let flakes: [Float]   // glints of ice in the air, full frame
     private let glintPower: [Float] // drops on the wet meadow, full frame
@@ -172,13 +172,7 @@ struct Scene {
         func terrain(_ layer: Layer, _ s: UInt32, _ x: Float) -> Float {
             let u = (x - w / 2) / h * layer.freq
             let shape: Float
-            if layer.snow {
-                // Ridged multifractal, domain-warped so crests lean, on a slow
-                // swell that lifts one massif above the rest.
-                let warp = 0.25 * fbm(u * 0.6, octaves: 2, seed: s ^ 0x27d4eb2f)
-                shape = 2.4 * ridged(u + warp, octaves: 6, seed: s) - 0.7
-                    + 0.6 * fbm(u * 0.35, octaves: 2, seed: s ^ 0x165667b1)
-            } else if layer.ridged {
+            if layer.ridged {
                 shape = 0.75 * (0.8 * (1 - 2.4 * abs(fbm(u, octaves: 4, seed: s))) + 0.25 * fbm(u * 7, octaves: 3, seed: s ^ 0x5bd1e995))
             } else {
                 shape = 1.5 * fbm(u, octaves: 3, seed: s)  // few octaves: soft, rounded hills
@@ -189,22 +183,29 @@ struct Scene {
         var groundY = [Float](repeating: 0, count: Self.layers.count * width)
         var topY = [Float](repeating: 0, count: Self.layers.count * width * sub)
         var snow = [Float](repeating: 0, count: width)
-        var slopes = [Float](repeating: 0, count: width)
         let near = Self.layers.count - 1
         let cabinX = 0.73 * w, cabinHalf = 0.019 * h
 
         for (l, layer) in Self.layers.enumerated() {
             let s = hash32(seed &* 0x2545f491 &+ UInt32(l))
             let row = l * width
+            if layer.snow {
+                for x in 0..<width { snow[x] = 0.010 * h * fbm(Float(x) / h * 14, octaves: 3, seed: s ^ 0x7f4a7c15) }
+                continue  // the summit is terrain (Massif), below
+            }
             for x in 0..<width { groundY[row + x] = terrain(layer, s, Float(x) + 0.5) }
             for i in 0..<(width * sub) { topY[row * sub + i] = terrain(layer, s, (Float(i) + 0.5) / Float(sub)) }
-            if layer.snow {
-                let r = max(Int(0.03 * h), 1)
-                for x in 0..<width {
-                    snow[x] = 0.010 * h * fbm(Float(x) / h * 14, octaves: 3, seed: s ^ 0x7f4a7c15)
-                    slopes[x] = (terrain(layer, s, Float(x + r) + 0.5) - terrain(layer, s, Float(x - r) + 0.5)) / Float(2 * r)
-                }
+        }
+        // The summit is terrain seen in perspective, behind the rocky range.
+        let massif = Massif(width: width, height: height, seed: seed, horizonY: horizonY,
+                            hidden: Array(groundY[width..<(2 * width)]), sub: sub)
+        for x in 0..<width {
+            var line = Float.infinity
+            for s in 0..<sub {
+                topY[x * sub + s] = massif.silhouette[x * sub + s]
+                line = min(line, massif.silhouette[x * sub + s])
             }
+            groundY[x] = line
         }
         func groundAt(_ l: Int, _ x: Float) -> Float { groundY[l * width + min(max(Int(x), 0), width - 1)] }
 
@@ -267,7 +268,10 @@ struct Scene {
                 tx += hw * (0.9 + 1.4 * rng.unit())
                 n &+= 1
                 let wood = fbm(tx / h * 2.2, octaves: 2, seed: s ^ 0x9e3779b9) * 0.5 + 0.5
-                if wood > layer.forest { continue }
+                // On the near hill the woods close in toward both sides, so trees
+                // frame the picture and it doesn't lean to one side.
+                let framing = l == near ? 0.35 * smoothstep(0.15 * w, 0, min(tx, w - tx)) : 0
+                if wood > layer.forest + framing { continue }
                 if l == near && tx > cabinX - cabinHalf - 2 * hw && tx < porch1 + 0.6 * cabinHalf + 2 * hw { continue }
                 let treeSeed = hash32(s ^ (n &* 0x9e3779b1))
                 if l >= 2 && hash32(treeSeed ^ 0x2f1e8a5b) % 10 < 3 {
@@ -327,8 +331,7 @@ struct Scene {
         leafShade = leafTone
         leafInfo = leafTag
         snowLine = snow
-        snowSlope = slopes
-        summitTop = groundY[0..<width].min()!
+        self.massif = massif
 
         // Flowers on the near meadow, bigger nearer; the season says which bloom.
         var flowerRng = SplitMix(state: UInt64(seed) &* 0xa0761d6478bd642f | 1)
@@ -486,8 +489,8 @@ struct Scene {
         // night it hides the stars behind it, and earthshine lights its dark
         // side, most in a thin crescent, when the Earth is nearly full in its sky.
         // Low over the horizon it looks bigger, as the real one seems to: up
-        // to 67% wider, back to its usual size by 30°.
-        let moonR = 0.013 * H * (1 + 0.67 * (1 - smoothstep(2, 30, moon.alt)))
+        // to 42% wider, back to its usual size by 30°.
+        let moonR = 0.0217 * H * (1 + 0.42 * (1 - smoothstep(2, 30, moon.alt)))
         let moonVis = (1 - 0.95 * w.overcast) * (1 - 0.5 * w.fog) * smoothstep(-1.5, -0.5, moon.alt) * smoothstep(3, 5, sunMoon)
         let opaque = smoothstep(6, -6, alt)
         let moonGain = 0.3 + 0.7 * opaque
@@ -778,8 +781,7 @@ struct Scene {
         // Snow takes the sky's light: white-blue by day, alpenglow pink at
         // sunrise and sunset, dim blue at night. Faces toward the sun are
         // brighter while it is up.
-        let snowLight = mixOklab(pal.mid, pal.glow, 0.5) * 1.25
-        let relief = 0.35 * smoothstep(-6, 3, alt)
+        let snowLight = mixOklab(pal.mid, pal.glow, 0.5) * 1.25  // the range's
         let windowLight = smoothstep(-0.5, -5, alt)
         let windowColor = RGB(hex: 0xffb35c) * 1.3
         let (wx0, wx1, wy0, wy1) = cabin.window
@@ -789,8 +791,7 @@ struct Scene {
         // peaks when it's low; snow and frost on the land, and once it has
         // snowed, on branch tops and the roof; leafy trees fresh, green, in
         // autumn's colors or bare; the fruit trees in blossom, then with apples.
-        let snowFoot = 0.70 * H  // the summit's foot, behind the rocky range
-        let snowAt = snowFoot - season.snowLine * (snowFoot - summitTop)
+        let snowAlt = Massif.foot + season.snowLine * (Massif.peak - Massif.foot)  // km
         let rangeSnow = smoothstep(0.35, 0.1, season.snowLine)
         let rangeTop = ground[width..<(2 * width)].sorted()[width / 5]  // its higher crests, not one outlier
         let groundSnow = max(w.snow, season.snowCover)
@@ -801,6 +802,55 @@ struct Scene {
         // belongs to the hill it's on, and more so the farther off.
         func inLayer(_ c: RGB, _ l: Int, _ tone: RGB? = nil) -> RGB {
             mixOklab(tone ?? tones[l], c * lightLevel, 0.6 * (1 - 0.6 * Self.layers[l].haze))
+        }
+        // The summit is lit as terrain: each pixel's face against the sun's
+        // direction from here (or the moon's), x right, y up, z away; the sky
+        // fills the shade, bluish on snow. Snow lies above the snow line on
+        // all but steep rock, lower in the hollows, higher on the ribs.
+        func toward(_ sx: Float, _ a: Float) -> (x: Float, y: Float, z: Float) {
+            let (az, el) = ((sx - w2) / ppd * .pi / 180, a * .pi / 180)
+            return (sinf(az) * cosf(el), sinf(el), cosf(az) * cosf(el))
+        }
+        let sunDir = toward(sunX, sunAlt), moonDir = toward(moon.x, moon.alt)
+        let sunGain = smoothstep(-1, 3, alt) * (1 - w.overcast), moonFill = 0.3 * moonLight
+        let snowSun = mixOklab(pal.glow, RGB(1, 0.97, 0.92), smoothstep(3, 25, sunAlt)) * 1.3
+        let snowShade = mixOklab(pal.mid, pal.zenith, 0.3)
+        let summitHaze = Self.layers[0].haze
+        let forestTint = RGB(pal.land.r * 0.65, pal.land.g * 0.8, pal.land.b * 0.65)
+        let meadowTint = RGB(pal.land.r * 1.3, pal.land.g * 1.2, pal.land.b * 0.85)
+        /// Whether the summit is wholly behind the rocky range here, so its
+        /// lighting can be skipped.
+        func layer0Hidden(_ l: Int, _ x: Int, _ fy: Float) -> Bool {
+            guard l == 0 else { return false }
+            for s in 0..<sub where fy - top[(width + x) * sub + s] < 0.5 { return false }
+            return true
+        }
+        func summitAlt(_ x: Int, _ y: Int) -> Float {
+            let r = y - massif.row0
+            return r >= 0 && r < massif.rows ? massif.alt[r * width + x] : Massif.foot
+        }
+        func summitTone(_ x: Int, _ y: Int) -> RGB {
+            let r = y - massif.row0
+            guard r >= 0 && r < massif.rows else { return tones[0] }
+            let i = r * width + x
+            let (nx, ny, nz) = (massif.normal[i * 3], massif.normal[i * 3 + 1], massif.normal[i * 3 + 2])
+            let up = ny / max((nx * nx + ny * ny + nz * nz).squareRoot(), 1e-4)
+            let sun = max(nx * sunDir.x + ny * sunDir.y + nz * sunDir.z, 0) * sunGain
+            let moonlit = max(nx * moonDir.x + ny * moonDir.y + nz * moonDir.z, 0) * moonFill
+            let (a, d) = (massif.alt[i], massif.dist[i])
+            let haze = 1 - (1 - summitHaze) * expf(-(d - 26) / 40)  // the summit's own at its distance
+            // Forest on its lower slopes, alpine meadow above the tree line,
+            // then rock.
+            var ground = mix(pal.land, meadowTint, 0.4 * smoothstep(2.7, 2.3, a))
+            ground = mix(ground, forestTint, smoothstep(2.0, 1.7, a) * smoothstep(0.6, 0.8, up))  // none on cliffs
+            let rock = mixOklab(ground * (0.45 + 0.2 * up + 1.8 * sun + moonlit), fog, haze)
+            let cover = smoothstep(-0.015, 0.015, a + massif.drift[i] - snowAlt) * smoothstep(0.45, 0.68, up)
+            var tone = rock
+            if cover > 0 {
+                let snow = snowShade * (0.75 + 0.25 * up) + snowSun * sun + snowLight * moonlit
+                tone = mix(rock, mix(snow, fog, haze * 0.55), cover)
+            }
+            return mix(tone, fog, 2 * Self.layers[0].mist * smoothstep(1.9, 1.0, a))  // haze gathers at its foot
         }
         let apple = RGB(hex: 0xc8302a)
         let snowAbove = max(Int((2.5 * scale).rounded()), 1)  // how far above a branch to look for open air: how deep the snow
@@ -960,6 +1010,7 @@ struct Scene {
                             if d < bowR - bw { c = c * (1 + 0.18 * bowGain) }
                             else if d > bowR + bw && d < r2 - bw2 { c = c * (1 - 0.2 * bowGain) }
                         }
+                        if layer0Hidden(l, x, fy) { continue }
                         let t0 = (l * width + x) * sub
                         var land: Float = 0
                         for s in 0..<sub { land += clamp01(fy - top[t0 + s] + 0.5) }
@@ -981,7 +1032,7 @@ struct Scene {
                         if cov == 0 { continue }
                         let layer = Self.layers[l]
                         let gy = ground[l * width + x]
-                        var tone = mix(tones[l], fog, layer.mist * smoothstep(0, mistDepth, fy - gy))
+                        var tone = layer.snow ? summitTone(x, y) : mix(tones[l], fog, layer.mist * smoothstep(0, mistDepth, fy - gy))
                         if l == near && seaLift > 0 && tree < 1 && fy >= gy {
                             tone = mixOklab(tone, seaShade, seaLift * (0.8 + 0.2 * smoothstep(gy + 0.1 * H, gy, fy)) * (1 - tree))
                         }
@@ -1076,19 +1127,6 @@ struct Scene {
                             let amount = smoothstep(line + 3, line - 3, fy)
                             if amount > 0 { tone = mix(tone, mix(snowLight, fog, layer.haze * 0.55), amount) }
                         }
-                        if layer.snow {
-                            let line = snowAt + snowLine[x]
-                            let amount = smoothstep(line + 3, line - 3, fy)
-                            if amount > 0 {
-                                // Snow faces turned to the sun are brighter: the face
-                                // normal against the direction to the sun.
-                                let slope = snowSlope[x]
-                                let (lx, ly) = (sunX - fx, sunY - fy)
-                                let facing = (slope * lx - ly) / ((1 + slope * slope) * (lx * lx + ly * ly)).squareRoot()
-                                let snow = mix(snowLight * (1 + relief * (clamp01(facing) - 0.5) * 2), fog, layer.haze * 0.55)
-                                tone = mix(tone, snow, amount)
-                            }
-                        }
                         if groundSnow > 0 && !layer.snow && fy >= gy {
                             // Snow on open ground; the trees stay dark.
                             tone = mix(tone, mix(snowGround, fog, layer.haze * 0.5), 0.75 * groundSnow * (1 - tree))
@@ -1101,7 +1139,8 @@ struct Scene {
                         }
                         if w.valley > 0 {
                             // Fog lakes: each hill's foot sinks into bright fog; least in front.
-                            let lake = smoothstep(0.004 * H, 0.05 * H, fy - gy) * (l == layerCount - 1 ? 0.35 : l == 0 ? 0.6 : 0.9)
+                            let lake = (layer.snow ? smoothstep(1.9, 1.3, summitAlt(x, y)) : smoothstep(0.004 * H, 0.05 * H, fy - gy))
+                                * (l == layerCount - 1 ? 0.35 : l == 0 ? 0.6 : 0.9)
                             tone = mix(tone, valleyColor, w.valley * lake * (1 - 0.5 * tree))
                         }
                         tone = tone + pal.glow * (g * layer.haze * 0.8)   // in-scattered sun

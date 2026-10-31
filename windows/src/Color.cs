@@ -181,25 +181,6 @@ static class Col
         }
         return sum / norm;
     }
-
-    /// Ridged multifractal (Musgrave): creased octaves, each weighted by the one
-    /// before, so detail gathers on the crests the way it does on real ranges.
-    /// Roughly [0, 0.8].
-    public static float Ridged(float u, int octaves, uint seed)
-    {
-        float sum = 0, amp = 1, norm = 0, freq = 1, weight = 1;
-        for (int k = 0; k < octaves; k++)
-        {
-            float r = 1 - Math.Abs(ValueNoise(u * freq + k * 17.31f, unchecked(seed + (uint)k * 1013)));
-            r = r * r * weight;
-            weight = Clamp01(r * 1.6f);
-            sum += amp * r;
-            norm += amp;
-            amp *= 0.5f;
-            freq *= 2.1f;
-        }
-        return sum / norm;
-    }
 }
 
 sealed class SplitMix

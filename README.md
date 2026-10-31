@@ -1,14 +1,15 @@
 # Sky wallpaper
 
 A dynamic wallpaper for macOS and Windows. It renders a day of a snowcapped
-mountain above spruce and leafy woods and a little cabin with a porch, as
-still frames, and shows the right one for the time of day. The night sky is
-the real one: the moon in its phase and place, the planets, the bright
-stars, the Milky Way, meteor showers and eclipses on their nights. The
-year turns: blossom, green, autumn colors, fallen leaves, snow. Two people
-live in the cabin and go out now and then; deer, a fox, hares, hedgehogs,
-birds and, rarely, a bear with her cubs come by. Optionally, it follows
-your real sunrise, sunset and hourly weather.
+massif, its ridges and faces catching the light as the sun moves, above
+spruce and leafy woods and a little cabin with a porch, as still frames, and
+shows the right one for the time of day. The night sky is the real one: the
+moon in its phase and place, the planets, the bright stars, the Milky Way,
+meteor showers and eclipses on their nights. The year turns: blossom, green,
+autumn colors, fallen leaves, snow. Two people live in the cabin and go out
+now and then; deer, a fox, hares, hedgehogs, birds and, rarely, a bear with
+her cubs come by. Optionally, it follows your real sunrise, sunset and
+hourly weather.
 
 ![The frames of one clear October day, from midnight to night](docs/preview.jpg)
 ![Overcast as a sea of clouds, after rain, fog lakes, cloudy as a broken sea, the morning after snow](docs/weather.jpg)
@@ -134,17 +135,19 @@ hour each frame shows:
 
 The view faces the equator and spans 240°: north of it, from east-northeast
 on the left to west-northwest on the right, so a rising or setting moon is
-mostly in view. The moon is drawn about five times its real size, the way
-it looks to us, and up to two-thirds bigger still near the horizon, where it
-seems bigger to us too. Without a location, the sky is drawn for 45° north
-at your time zone's longitude.
+mostly in view. The moon is drawn about eight times its real size, the way
+it looks to us, and up to 42% bigger still near the horizon, where it seems
+bigger to us too. Without a location, the sky is drawn for 45° north at your
+time zone's longitude.
 
 ## The seasons
 
 The year runs through the landscape, from the date (south of the equator,
 half a year on), or from the forecast where it says more:
 - **The summit's snow** rises and falls with the year, or follows the day's
-  freezing level; low in winter, it reaches the rocky range's peaks too.
+  freezing level. It lies on the gentler slopes and longest in the gullies,
+  while steep rock stays bare; low in winter, it reaches the rocky range's
+  peaks too.
 - **Leafy trees** stand among the spruces: maple, birch, beech, oak, linden,
   each built its own way (an oak short and crooked under wide limbs, a birch
   slender and white-barked under a light crown of hanging twigs). In spring

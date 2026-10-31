@@ -197,7 +197,8 @@ sealed class Scene
     }
 
     // Far to near: a snowcapped summit, a rocky middle range, then rounded
-    // wooded hills. The nearest hill carries the cabin.
+    // wooded hills. The nearest hill carries the cabin. The summit is terrain
+    // (Massif), so only its haze and mist are used from here.
     static readonly Layer[] Layers = {
         new Layer(0.600f, 0.120f, 1.3f, 0.66f, 0.25f, true, true, 0, 0),
         new Layer(0.680f, 0.060f, 2.2f, 0.48f, 0.30f, true, false, 0, 0),
@@ -220,11 +221,10 @@ sealed class Scene
     readonly List<Leafy> leafy;  // leafy trees, for their fallen leaves
     readonly int[] litterBy;     // [(layer * width + x) * 4 + k] the four leafy trees whose leaves may lie here, or -1
     readonly float[] snowLine;   // [x] the snow line's ragged edge, an offset from where the season puts it
-    readonly float summitTop;    // the summit's highest point, y
     readonly float[] flowerX, flowerY, flowerR;  // on the near meadow
     readonly uint[] flowerN;
     readonly float[] flyX, flyY, flyK;           // fireflies over the near meadow, by the trees
-    readonly float[] snowSlope;  // [x] its slope over ±3% of the height, so shading blends, not splits
+    readonly Massif massif;      // the summit as terrain, lit per pixel
     public readonly Cabin Cabin;
     readonly float[] flakes;     // glints of ice in the air, full frame
     readonly float[] glintPower; // drops on the wet meadow, full frame
@@ -243,7 +243,6 @@ sealed class Scene
         ground = new float[Layers.Length * width];
         top = new float[Layers.Length * width * Sub];
         snowLine = new float[width];
-        snowSlope = new float[width];
         int near = Layers.Length - 1;
         float cabinX = 0.73f * W, cabinHalf = 0.019f * H;
 
@@ -252,17 +251,27 @@ sealed class Scene
             Layer layer = Layers[l];
             uint s = Col.Hash32(unchecked(seed * 0x2545f491 + (uint)l));
             int row = l * width;
-            for (int x = 0; x < width; x++) ground[row + x] = Terrain(layer, s, x + 0.5f);
-            for (int i = 0; i < width * Sub; i++) top[row * Sub + i] = Terrain(layer, s, (i + 0.5f) / Sub);
             if (layer.Snow)
             {
-                int r = Math.Max((int)(0.03f * H), 1);
-                for (int x = 0; x < width; x++)
-                {
-                    snowLine[x] = 0.010f * H * Col.Fbm(x / H * 14, 3, s ^ 0x7f4a7c15);
-                    snowSlope[x] = (Terrain(layer, s, x + r + 0.5f) - Terrain(layer, s, x - r + 0.5f)) / (2 * r);
-                }
+                for (int x = 0; x < width; x++) snowLine[x] = 0.010f * H * Col.Fbm(x / H * 14, 3, s ^ 0x7f4a7c15);
+                continue;  // the summit is terrain (Massif), below
             }
+            for (int x = 0; x < width; x++) ground[row + x] = Terrain(layer, s, x + 0.5f);
+            for (int i = 0; i < width * Sub; i++) top[row * Sub + i] = Terrain(layer, s, (i + 0.5f) / Sub);
+        }
+        // The summit is terrain seen in perspective, behind the rocky range.
+        var rangeGround = new float[width];
+        Array.Copy(ground, width, rangeGround, 0, width);
+        massif = new Massif(width, height, seed, horizonY, rangeGround, Sub);
+        for (int x = 0; x < width; x++)
+        {
+            float line = float.PositiveInfinity;
+            for (int k = 0; k < Sub; k++)
+            {
+                top[x * Sub + k] = massif.Silhouette[x * Sub + k];
+                line = Math.Min(line, massif.Silhouette[x * Sub + k]);
+            }
+            ground[x] = line;
         }
         Func<int, float, float> groundAt = (l, x) => ground[l * width + Math.Min(Math.Max((int)x, 0), width - 1)];
 
@@ -336,7 +345,10 @@ sealed class Scene
                 tx += hw * (0.9f + 1.4f * rng.Unit());
                 n = unchecked(n + 1);
                 float wood = Col.Fbm(tx / H * 2.2f, 2, s ^ 0x9e3779b9) * 0.5f + 0.5f;
-                if (wood > layer.Forest) continue;
+                // On the near hill the woods close in toward both sides, so trees
+                // frame the picture and it doesn't lean to one side.
+                float framing = l == near ? 0.35f * Col.Smoothstep(0.15f * W, 0, Math.Min(tx, W - tx)) : 0;
+                if (wood > layer.Forest + framing) continue;
                 if (l == near && tx > cabinX - cabinHalf - 2 * hw && tx < porch1 + 0.6f * cabinHalf + 2 * hw) continue;
                 uint treeSeed = Col.Hash32(s ^ unchecked(n * 0x9e3779b1));
                 if (l >= 2 && Col.Hash32(treeSeed ^ 0x2f1e8a5b) % 10 < 3)
@@ -399,8 +411,6 @@ sealed class Scene
             WindowX0 = cabinX - 0.55f * cabinHalf, WindowX1 = cabinX - 0.15f * cabinHalf,
             WindowY0 = cabinBase - 0.72f * wallH, WindowY1 = cabinBase - 0.38f * wallH,
         };
-        summitTop = float.MaxValue;
-        for (int x = 0; x < width; x++) summitTop = Math.Min(summitTop, ground[x]);
 
         // Flowers on the near meadow, bigger nearer; the season says which bloom.
         var flowerRng = new SplitMix(unchecked(((ulong)seed * 0xa0761d6478bd642f) | 1));
@@ -489,15 +499,7 @@ sealed class Scene
     {
         float u = (x - W / 2) / H * layer.Freq;
         float shape;
-        if (layer.Snow)
-        {
-            // Ridged multifractal, domain-warped so crests lean, on a slow
-            // swell that lifts one massif above the rest.
-            float warp = 0.25f * Col.Fbm(u * 0.6f, 2, s ^ 0x27d4eb2f);
-            shape = 2.4f * Col.Ridged(u + warp, 6, s) - 0.7f
-                + 0.6f * Col.Fbm(u * 0.35f, 2, s ^ 0x165667b1);
-        }
-        else if (layer.Ridged)
+        if (layer.Ridged)
         {
             shape = 0.75f * (0.8f * (1 - 2.4f * Math.Abs(Col.Fbm(u, 4, s))) + 0.25f * Col.Fbm(u * 7, 3, s ^ 0x5bd1e995));
         }
@@ -686,8 +688,8 @@ sealed class Scene
         // night it hides the stars behind it, and earthshine lights its dark
         // side, most in a thin crescent, when the Earth is nearly full in its sky.
         // Low over the horizon it looks bigger, as the real one seems to: up
-        // to 67% wider, back to its usual size by 30°.
-        float moonR = 0.013f * H * (1 + 0.67f * (1 - Col.Smoothstep(2, 30, moon.Alt)));
+        // to 42% wider, back to its usual size by 30°.
+        float moonR = 0.0217f * H * (1 + 0.42f * (1 - Col.Smoothstep(2, 30, moon.Alt)));
         float moonVis = (1 - 0.95f * w.Overcast) * (1 - 0.5f * w.Fog) * Col.Smoothstep(-1.5f, -0.5f, moon.Alt) * Col.Smoothstep(3, 5, sunMoon);
         float opaque = Col.Smoothstep(6, -6, alt);
         float moonGain = 0.3f + 0.7f * opaque;
@@ -1009,8 +1011,7 @@ sealed class Scene
         // Snow takes the sky's light: white-blue by day, alpenglow pink at
         // sunrise and sunset, dim blue at night. Faces toward the sun are
         // brighter while it is up.
-        RGB snowLight = Col.MixOklab(pal.Mid, pal.Glow, 0.5f) * 1.25f;
-        float relief = 0.35f * Col.Smoothstep(-6, 3, alt);
+        RGB snowLight = Col.MixOklab(pal.Mid, pal.Glow, 0.5f) * 1.25f;  // the range's
         float windowLight = Col.Smoothstep(-0.5f, -5, alt);
         RGB windowColor = RGB.Hex(0xffb35c) * 1.3f;
         Cabin cabin = Cabin;
@@ -1021,8 +1022,7 @@ sealed class Scene
         // peaks when it's low; snow and frost on the land, and once it has
         // snowed, on branch tops and the roof; leafy trees fresh, green, in
         // autumn's colors or bare; the fruit trees in blossom, then with apples.
-        float snowFoot = 0.70f * H;  // the summit's foot, behind the rocky range
-        float snowAt = snowFoot - season.SnowLine * (snowFoot - summitTop);
+        float snowAlt = Massif.Foot + season.SnowLine * (Massif.Peak - Massif.Foot);  // km
         float rangeSnow = Col.Smoothstep(0.35f, 0.1f, season.SnowLine);
         var rangeLine = new float[width];
         Array.Copy(ground, width, rangeLine, 0, width);
@@ -1036,6 +1036,24 @@ sealed class Scene
         // belongs to the hill it's on, and more so the farther off.
         Func<RGB, int, RGB, RGB> inTone = (col, l, tone) => Col.MixOklab(tone, col * lightLevel, 0.6f * (1 - 0.6f * Layers[l].Haze));
         Func<RGB, int, RGB> inLayer = (col, l) => inTone(col, l, tones[l]);
+        // The summit is lit as terrain: each pixel's face against the sun's
+        // direction from here (or the moon's), x right, y up, z away; the sky
+        // fills the shade, bluish on snow. Snow lies above the snow line on
+        // all but steep rock, lower in the hollows, higher on the ribs.
+        var summit = new SummitLight();
+        Toward(sunX, sunAlt, w2, ppd, out summit.SunX, out summit.SunY, out summit.SunZ);
+        Toward(moon.X, moon.Alt, w2, ppd, out summit.MoonX, out summit.MoonY, out summit.MoonZ);
+        summit.SunGain = Col.Smoothstep(-1, 3, alt) * (1 - w.Overcast);
+        summit.MoonFill = 0.3f * moonLight;
+        summit.SnowSun = Col.MixOklab(pal.Glow, new RGB(1, 0.97f, 0.92f), Col.Smoothstep(3, 25, sunAlt)) * 1.3f;
+        summit.SnowShade = Col.MixOklab(pal.Mid, pal.Zenith, 0.3f);
+        summit.SnowLight = snowLight;
+        summit.Land = pal.Land;
+        summit.Fog = fog;
+        summit.Flat = tones[0];
+        summit.ForestTint = new RGB(pal.Land.R * 0.65f, pal.Land.G * 0.8f, pal.Land.B * 0.65f);
+        summit.MeadowTint = new RGB(pal.Land.R * 1.3f, pal.Land.G * 1.2f, pal.Land.B * 0.85f);
+        summit.SnowAlt = snowAlt;
         RGB apple = RGB.Hex(0xc8302a);
         int snowAbove = Math.Max((int)Math.Round(2.5f * scale, MidpointRounding.AwayFromZero), 1);  // how far above a branch to look for open air: how deep the snow
         RGB snowOnTop = Col.Mix(snowGround, new RGB(1, 1, 1), 0.3f);
@@ -1216,6 +1234,7 @@ sealed class Scene
                         if (bd < bowR - bw) c = c * (1 + 0.18f * bowGain);
                         else if (bd > bowR + bw && bd < r2 - bw2) c = c * (1 - 0.2f * bowGain);
                     }
+                    if (l == 0 && Layer0Hidden(x, fy)) continue;
                     int t0 = (l * width + x) * Sub;
                     float land = 0;
                     for (int s = 0; s < Sub; s++) land += Col.Clamp01(fy - top[t0 + s] + 0.5f);
@@ -1242,7 +1261,7 @@ sealed class Scene
                     if (cov == 0) continue;
                     Layer layer = Layers[l];
                     float gy = ground[l * width + x];
-                    RGB tone = Col.Mix(tones[l], fog, layer.Mist * Col.Smoothstep(0, mistDepth, fy - gy));
+                    RGB tone = layer.Snow ? SummitTone(x, y, summit) : Col.Mix(tones[l], fog, layer.Mist * Col.Smoothstep(0, mistDepth, fy - gy));
                     if (l == near && seaLift > 0 && tree < 1 && fy >= gy)
                         tone = Col.MixOklab(tone, seaShade, seaLift * (0.8f + 0.2f * Col.Smoothstep(gy + 0.1f * H, gy, fy)) * (1 - tree));
                     if (tree > 0) tone = tone * (1 - 0.18f * (1 - layer.Haze) * tree);  // spruce darker than meadow
@@ -1353,21 +1372,6 @@ sealed class Scene
                         float ramount = Col.Smoothstep(rline + 3, rline - 3, fy);
                         if (ramount > 0) tone = Col.Mix(tone, Col.Mix(snowLight, fog, layer.Haze * 0.55f), ramount);
                     }
-                    if (layer.Snow)
-                    {
-                        float sline = snowAt + snowLine[x];
-                        float amount = Col.Smoothstep(sline + 3, sline - 3, fy);
-                        if (amount > 0)
-                        {
-                            // Snow faces turned to the sun are brighter: the face
-                            // normal against the direction to the sun.
-                            float slope = snowSlope[x];
-                            float lx = sunX - fx, ly = sunY - fy;
-                            float facing = (slope * lx - ly) / Col.Sqrt((1 + slope * slope) * (lx * lx + ly * ly));
-                            RGB snow = Col.Mix(snowLight * (1 + relief * (Col.Clamp01(facing) - 0.5f) * 2), fog, layer.Haze * 0.55f);
-                            tone = Col.Mix(tone, snow, amount);
-                        }
-                    }
                     if (groundSnow > 0 && !layer.Snow && fy >= gy)
                     {
                         // Snow on open ground; the trees stay dark.
@@ -1384,7 +1388,8 @@ sealed class Scene
                     if (w.Valley > 0)
                     {
                         // Fog lakes: each hill's foot sinks into bright fog; least in front.
-                        float lake = Col.Smoothstep(0.004f * H, 0.05f * H, fy - gy) * (l == Layers.Length - 1 ? 0.35f : l == 0 ? 0.6f : 0.9f);
+                        float lake = (layer.Snow ? Col.Smoothstep(1.9f, 1.3f, SummitAlt(x, y)) : Col.Smoothstep(0.004f * H, 0.05f * H, fy - gy))
+                            * (l == Layers.Length - 1 ? 0.35f : l == 0 ? 0.6f : 0.9f);
                         tone = Col.Mix(tone, valleyColor, w.Valley * lake * (1 - 0.5f * tree));
                     }
                     tone = tone + pal.Glow * (g * layer.Haze * 0.8f);  // in-scattered sun
@@ -1477,6 +1482,63 @@ sealed class Scene
 
     /// How much of a unit disk another disk of radius `r` covers, its center
     /// `d` away: 0…1.
+    /// What the summit is lit by in one frame (Render).
+    sealed class SummitLight
+    {
+        public float SunX, SunY, SunZ, MoonX, MoonY, MoonZ, SunGain, MoonFill, SnowAlt;
+        public RGB SnowSun, SnowShade, SnowLight, Land, Fog, Flat, ForestTint, MeadowTint;
+    }
+
+    /// The direction to a sky object drawn at screen x `sx` and altitude `a`
+    /// degrees, as seen from here: x right, y up, z away.
+    static void Toward(float sx, float a, float w2, float ppd, out float x, out float y, out float z)
+    {
+        float az = (sx - w2) / ppd * (float)Math.PI / 180, el = a * (float)Math.PI / 180;
+        x = (float)Math.Sin(az) * (float)Math.Cos(el);
+        y = (float)Math.Sin(el);
+        z = (float)Math.Cos(az) * (float)Math.Cos(el);
+    }
+
+    /// Whether the summit is wholly behind the rocky range here, so its
+    /// lighting can be skipped.
+    bool Layer0Hidden(int x, float fy)
+    {
+        for (int s = 0; s < Sub; s++) if (fy - top[(Width + x) * Sub + s] < 0.5f) return false;
+        return true;
+    }
+
+    float SummitAlt(int x, int y)
+    {
+        int r = y - massif.Row0;
+        return r >= 0 && r < massif.Rows ? massif.Alt[r * Width + x] : Massif.Foot;
+    }
+
+    RGB SummitTone(int x, int y, SummitLight k)
+    {
+        int r = y - massif.Row0;
+        if (r < 0 || r >= massif.Rows) return k.Flat;
+        int i = r * Width + x;
+        float nx = massif.Normal[i * 3], ny = massif.Normal[i * 3 + 1], nz = massif.Normal[i * 3 + 2];
+        float up = ny / Math.Max(Col.Sqrt(nx * nx + ny * ny + nz * nz), 1e-4f);
+        float sun = Math.Max(nx * k.SunX + ny * k.SunY + nz * k.SunZ, 0) * k.SunGain;
+        float moonlit = Math.Max(nx * k.MoonX + ny * k.MoonY + nz * k.MoonZ, 0) * k.MoonFill;
+        float a = massif.Alt[i], d = massif.Dist[i];
+        float haze = 1 - (1 - Layers[0].Haze) * Col.Exp(-(d - 26) / 40);  // the summit's own at its distance
+        // Forest on its lower slopes, alpine meadow above the tree line,
+        // then rock.
+        RGB ground = Col.Mix(k.Land, k.MeadowTint, 0.4f * Col.Smoothstep(2.7f, 2.3f, a));
+        ground = Col.Mix(ground, k.ForestTint, Col.Smoothstep(2.0f, 1.7f, a) * Col.Smoothstep(0.6f, 0.8f, up));  // none on cliffs
+        RGB rock = Col.MixOklab(ground * (0.45f + 0.2f * up + 1.8f * sun + moonlit), k.Fog, haze);
+        float cover = Col.Smoothstep(-0.015f, 0.015f, a + massif.Drift[i] - k.SnowAlt) * Col.Smoothstep(0.45f, 0.68f, up);
+        RGB tone = rock;
+        if (cover > 0)
+        {
+            RGB snow = k.SnowShade * (0.75f + 0.25f * up) + k.SnowSun * sun + k.SnowLight * moonlit;
+            tone = Col.Mix(rock, Col.Mix(snow, k.Fog, haze * 0.55f), cover);
+        }
+        return Col.Mix(tone, k.Fog, 2 * Layers[0].Mist * Col.Smoothstep(1.9f, 1.0f, a));  // haze gathers at its foot
+    }
+
     static float DiskOverlap(float r, float d)
     {
         if (d >= 1 + r) return 0;

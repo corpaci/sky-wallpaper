@@ -135,23 +135,6 @@ func fbm2(_ u: Float, _ v: Float, octaves: Int, seed: UInt32) -> Float {
     return sum / norm
 }
 
-/// Ridged multifractal (Musgrave): creased octaves, each weighted by the one
-/// before, so detail gathers on the crests the way it does on real ranges.
-/// Roughly [0, 0.8].
-func ridged(_ u: Float, octaves: Int, seed: UInt32) -> Float {
-    var sum: Float = 0, amp: Float = 1, norm: Float = 0, freq: Float = 1, weight: Float = 1
-    for k in 0..<octaves {
-        var r = 1 - abs(valueNoise(u * freq + Float(k) * 17.31, seed &+ UInt32(k) &* 1013))
-        r = r * r * weight
-        weight = clamp01(r * 1.6)
-        sum += amp * r
-        norm += amp
-        amp *= 0.5
-        freq *= 2.1
-    }
-    return sum / norm
-}
-
 struct SplitMix {
     var state: UInt64
     mutating func next() -> UInt64 {

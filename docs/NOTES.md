@@ -21,17 +21,27 @@ fresh clone). The HEIC is not byte-identical between packs of the same
 frames: about 0.5 KB near the start of the file differs.
 
 **Landscape.** Far to near:
-- a summit of domain-warped ridged multifractal noise, with a ragged snowcap
-  that takes the sky's color and is brighter on the face toward the sun;
+- a summit massif modeled as terrain (`Massif.swift`), about 26 km off and
+  seen through a long lens: a crest of peaks, the highest a horn left of the
+  middle, across from the cabin, shaped by 2-D ridged multifractal noise
+  under an envelope that falls away concave from the crest. Rays are marched
+  front to back once per render, two per pixel column, and each row a sample
+  uncovers keeps its normal, height and distance (weighted by how much of
+  the row it covers, so edges inside the massif are smooth). Each frame then
+  lights it: the sun's (or the moon's) direction against the face, sky light
+  in the shade, bluish on snow; snow above the snow line on slopes under
+  about 50°, lower in hollows and higher on ribs; forest and meadow below
+  the rock; haze by distance and gathering at its foot;
 - a rocky middle range;
-- rounded hills with spruce woods and clearings;
+- rounded hills with spruce woods and clearings, the near one wooded toward
+  both sides so the picture doesn't lean;
 - a cabin with a porch (lean-to roof, posts, railing with balusters, steps),
   whose window lights up from dusk to dawn, with three tall spruces beside
   it.
 
-The land is a silhouette line, sampled four times per pixel column. Trees and
-the porch are 2-D antialiased coverage, so sky shows between branches. Each
-spruce is built from tapered capsules:
+The land is a silhouette line, sampled four times per pixel column (the
+summit's from its rays). Trees and the porch are 2-D antialiased coverage,
+so sky shows between branches. Each spruce is built from tapered capsules:
 - a trunk with 21 whorls up a cone (a Fibonacci number), alternately 5 and 3
   branches;
 - each branch turned by the golden angle (137.5°), so its sideways reach,
@@ -161,8 +171,8 @@ for the frame's moment and place:
   down, as a wide panorama does (stars near the zenith can show twice
   there; the moon isn't drawn past it).
 - **The moon** is a sphere lit from the real sun's direction, flat to its
-  rim as the real moon is (Lommel–Seeliger), drawn about five times its real
-  size, and up to 67% wider again near the horizon, back to normal by 30°
+  rim as the real moon is (Lommel–Seeliger), drawn about eight times its real
+  size, and up to 42% wider again near the horizon, back to normal by 30°
   (the moon illusion). Its maria are hand-placed patches; their north follows the ecliptic
   pole, within 1.5° of the moon's axis. Earthshine on the dark side is
   strongest in a thin crescent. Its light adds blue to the night palette, and
@@ -269,7 +279,11 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
   Quadrantids' night, forced snow and rain days in winter, spring and
   autumn, and the March geese; one rain night (2026-05-20) has a single
   pixel off by 3, a bright point at the top edge, while the same clear night
-  matches.
+  matches. At 1440×936 one pixel of the rain day's golden evening is off
+  by 5, in the sky at (343, 555).
+  - The summit's terrain is plain arithmetic, no `exp`: its march takes
+    branches on its values, and one ulp of difference in a library function
+    could send a ray another way. Both ports march it the same, to the bit.
   - The port found a bug: at a meteor streak's last point the sine of π came
     out a hair below zero, its power NaN, which could black out that point and
     the stars beside it; Swift and Mono disagreed about the result. Both now
@@ -288,6 +302,13 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
 - **What seasons, trees and life cost (2026-10-30).** One day at 3024×1964
   for Berlin, 19 frames, before and after: 7.6 s → 8.1 s wall clock,
   18 s → 25 s CPU, 181 MB → 240 MB peak memory (the leaf planes).
+- **What the massif costs (2026-10-31).** One day at 3420×2224 for Berlin,
+  20 frames, before and after: 33.7 s → 38.8 s CPU (about 3 s of it marching
+  the terrain once, the rest lighting it in each frame), 302 MB → 432 MB
+  peak memory (each pixel's normal, height and distance, and the march's
+  buffer). The marcher steps by how far the land can't rise in the gap to
+  the ray: the envelope, the first three octaves plus what the rest can add,
+  then the full height; with those bounds a ray takes about 2,000 steps.
 - **How often someone's out.** A simulation of the frame schedule over
   2026–2029 in Berlin, clear skies: the two are out in 2.8% of frames, on
   about 100 days a year (stargazing 242 frames, strolls 222, hikes 116,
