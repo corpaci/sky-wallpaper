@@ -6,7 +6,9 @@
 //              [--sunrise HH:MM --sunset HH:MM | --lat DEG --lon DEG [--date yyyy-MM-dd] [--utc-offset MIN]]
 //   sky tick [--force]   what the scheduled task runs: render today if needed,
 //                        keep the task's switch times current, set the frame
-//   sky apply DIR        set each monitor to the frame for the current local time
+//   sky follow           stay running, asleep; tick when monitors change
+//   sky follow-task      register and start the task that runs follow at logon
+//   sky apply DIR       set each monitor to the frame for the current local time
 //   sky frame DIR HH:MM [WxH]   print the frame a monitor that size shows then
 //   sky schedule DIR     print the switch times, one HH:MM per line
 //   sky monitors         list monitors and their pixel sizes
@@ -22,6 +24,8 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using Microsoft.Win32;
 
 sealed class UsageException : Exception
 {
@@ -104,7 +108,7 @@ static class Program
     const string Usage = @"usage: sky render [--size WxH]... [--seed N] [--dry-run] --out DIR
            [--sunrise HH:MM --sunset HH:MM | --lat DEG --lon DEG [--date yyyy-MM-dd] [--utc-offset MIN]]
        sky apply DIR | sky frame DIR HH:MM [WxH] | sky schedule DIR | sky task-xml DIR
-       sky tick [--force] | sky monitors | sky save FILE | sky restore FILE";
+       sky tick [--force] | sky follow | sky follow-task | sky monitors | sky save FILE | sky restore FILE";
 
     [STAThread]
     static int Main(string[] args)
@@ -170,6 +174,21 @@ static class Program
             case "tick":
                 if (rest.Count > 1 || (rest.Count == 1 && rest[0] != "--force")) throw new UsageException("usage: sky tick [--force]");
                 return Tick(rest.Count == 1);
+            case "follow":
+                if (rest.Count != 0) throw new UsageException("usage: sky follow");
+                return Follow();
+            case "follow-task":
+            {
+                if (rest.Count != 0) throw new UsageException("usage: sky follow-task");
+                string user = System.Security.Principal.WindowsIdentity.GetCurrent().Name, error;
+                string exe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "sky-apply.exe");
+                if (!SkyTask.Register(SkyTask.FollowName, SkyTask.FollowXml(user, exe), out error))
+                    throw new InvalidOperationException("cannot register the follower task: " + error);
+                if (!SkyTask.Start(SkyTask.FollowName, out error))
+                    throw new InvalidOperationException("cannot start the follower task: " + error);
+                Console.WriteLine("task '" + SkyTask.FollowName + "' registered and running");
+                return 0;
+            }
             case "task-xml":
                 Console.Write(SkyTask.Xml(Today(), FrameSet.LoadAll(One(rest, "task-xml DIR"))[0].Entries.Select(e => e.Key),
                     Environment.UserDomainName + "\\" + Environment.UserName, Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "sky-apply.exe"), true));
@@ -201,7 +220,20 @@ static class Program
     /// (yes|no), seed, or sunrise and sunset when there is no location.
     static int Tick(bool force)
     {
+        // One at a time: the task and the follower can both start one.
+        using (var turn = new Mutex(false, @"Local\SkyWallpaperTick"))
+        {
+            try { turn.WaitOne(); }
+            catch (AbandonedMutexException) { }  // the last one died; the turn is ours anyway
+            try { return TickOnce(force); }
+            finally { turn.ReleaseMutex(); }
+        }
+    }
+
+    static int TickOnce(bool force)
+    {
         string app = AppDomain.CurrentDomain.BaseDirectory;
+        Desktop.BeDpiAware();
         var config = new Dictionary<string, string>();
         foreach (string line in File.ReadAllLines(Path.Combine(app, "config.txt")))
         {
@@ -211,18 +243,39 @@ static class Program
         Func<string, string, string> get = (name, fallback) => config.ContainsKey(name) ? config[name] : fallback;
         bool located = config.ContainsKey("lat") && config.ContainsKey("lon");
 
+        // Every monitor size seen so far, not just the ones connected now: a
+        // monitor unplugged at 00:05 still gets its own frames when it's back.
+        string known = Path.Combine(app, "screens.txt");
+        var sizes = new List<string>();
+        if (File.Exists(known))
+            foreach (string line in File.ReadAllLines(known))
+            {
+                int kw, kh;
+                if (ParseSize(line.Trim(), out kw, out kh)) sizes.Add(kw + "x" + kh);
+            }
+        foreach (Monitor m in Desktop.Monitors()) sizes.Add(m.Width + "x" + m.Height);
+        sizes = sizes.Distinct().ToList();
+        File.WriteAllLines(known, sizes);
+        Func<string, List<string>, List<string>> withSizes = (outDir, list) =>
+        {
+            var args = new List<string> { "--seed", get("seed", "7"), "--out", outDir };
+            args.AddRange(located
+                ? new[] { "--lat", config["lat"], "--lon", config["lon"] }
+                : new[] { "--sunrise", get("sunrise", "07:20"), "--sunset", get("sunset", "17:55") });
+            foreach (string size in list) args.AddRange(new[] { "--size", size });
+            return args;
+        };
+
         // A new day, a new sky: the moon and stars move even when the times stay fixed.
         string key = Today();
         string dir = Directory.GetDirectories(app, "frames-" + key + "-*")
             .Where(d => Directory.GetFiles(d, "manifest.txt", SearchOption.AllDirectories).Length > 0)
             .OrderByDescending(d => d, StringComparer.Ordinal).FirstOrDefault();
+        var missing = new List<string>();
         if (dir == null || force)
         {
             dir = Path.Combine(app, "frames-" + key + "-" + DateTime.Now.ToString("HHmmss", CultureInfo.InvariantCulture));
-            var args = new List<string> { "--seed", get("seed", "7"), "--out", dir };
-            args.AddRange(located
-                ? new[] { "--lat", config["lat"], "--lon", config["lon"] }
-                : new[] { "--sunrise", get("sunrise", "07:20"), "--sunset", get("sunset", "17:55") });
+            List<string> args = withSizes(dir, sizes);
             bool weather = located && get("weather", "yes") == "yes";
             if (!weather) Render(args);
             else
@@ -236,6 +289,7 @@ static class Program
                 }
             }
         }
+        else missing = sizes.Where(s => !File.Exists(Path.Combine(dir, s, "manifest.txt"))).ToList();
         List<FrameSet> sets = FrameSet.LoadAll(dir);
 
         string registered = Path.Combine(app, "task.txt");
@@ -243,18 +297,30 @@ static class Program
         {
             var minutes = sets[0].Entries.Select(e => e.Key).ToList();
             string user = System.Security.Principal.WindowsIdentity.GetCurrent().Name, exe = Path.Combine(app, "sky-apply.exe"), error;
-            if (!SkyTask.Register(SkyTask.Xml(Today(), minutes, user, exe, true), out error))
+            if (!SkyTask.Register(SkyTask.Name, SkyTask.Xml(Today(), minutes, user, exe, true), out error))
             {
                 // Event triggers can be refused on locked-down machines; unlock and logon still catch up.
                 Fail("no wake trigger (" + error + "); the frame catches up at unlock instead");
-                if (!SkyTask.Register(SkyTask.Xml(Today(), minutes, user, exe, false), out error))
+                if (!SkyTask.Register(SkyTask.Name, SkyTask.Xml(Today(), minutes, user, exe, false), out error))
                     throw new InvalidOperationException("cannot register the scheduled task: " + error);
             }
             File.WriteAllText(registered, dir);
         }
 
-        Desktop.BeDpiAware();
         foreach (string line in Desktop.Apply(sets, Now())) Console.WriteLine(line);
+
+        // A monitor of a size not rendered today (just plugged in) has the
+        // closest frames for now; render its own into the same day, from the
+        // same forecast, so its switch times match, then set them.
+        if (missing.Count > 0)
+        {
+            List<string> args = withSizes(dir, missing);
+            string forecast = Path.Combine(dir, "forecast.json");
+            if (File.Exists(forecast)) args.AddRange(new[] { "--forecast", forecast });
+            Render(args);
+            foreach (string line in Desktop.Apply(FrameSet.LoadAll(dir), Now())) Console.WriteLine(line);
+        }
+
         foreach (string old in Directory.GetDirectories(app, "frames-*"))
         {
             if (string.Equals(old, dir, StringComparison.OrdinalIgnoreCase)) continue;
@@ -262,6 +328,57 @@ static class Program
             catch (IOException) { }  // still on screen somewhere; next tick
         }
         return 0;
+    }
+
+    /// Stays running, asleep, for as long as the session: when a monitor is
+    /// plugged in, unplugged, turned or changes resolution, Windows gives it
+    /// whatever wallpaper it showed last time. So once the change settles,
+    /// this runs a tick, which sets every monitor to the frame for now (and
+    /// renders a new monitor's size); and once more a little later, in case
+    /// Windows put its remembered one back after us. Event-driven: no timers.
+    static int Follow()
+    {
+        bool mine;
+        using (new Mutex(true, @"Local\SkyWallpaperFollow", out mine))
+        {
+            if (!mine) return 0;  // one follower per session
+            string exe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "sky-apply.exe");
+            var changed = new AutoResetEvent(false);
+            // SystemEvents keeps its own hidden window and message loop only
+            // when it's set up off an STA thread, which Main is.
+            var listener = new Thread(() =>
+            {
+                SystemEvents.DisplaySettingsChanged += (s, e) => changed.Set();
+                for (;;)
+                {
+                    changed.WaitOne();
+                    while (changed.WaitOne(3000)) { }  // until it's been quiet for 3 s
+                    RunTick(exe);
+                    if (changed.WaitOne(15000)) changed.Set();  // changed again: start over
+                    else RunTick(exe);
+                }
+            });
+            listener.IsBackground = true;
+            listener.Start();
+            listener.Join();
+            return 0;
+        }
+    }
+
+    /// A tick in its own process, so a render's memory goes when it's done.
+    static void RunTick(string exe)
+    {
+        try
+        {
+            var start = new ProcessStartInfo(exe, "tick") { UseShellExecute = false, CreateNoWindow = true };
+            using (Process p = Process.Start(start))
+            {
+                try { p.PriorityClass = ProcessPriorityClass.BelowNormal; }
+                catch (InvalidOperationException) { }  // already done
+                p.WaitForExit();
+            }
+        }
+        catch (System.ComponentModel.Win32Exception e) { Fail("follow: cannot start " + exe + ": " + e.Message); }
     }
 
     static string One(List<string> rest, string form)

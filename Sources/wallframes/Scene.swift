@@ -615,12 +615,14 @@ struct Scene {
                 DispatchQueue.concurrentPerform(iterations: gh) { j in
                     for i in 0..<gw {
                         let a = (horizon - Float(j * gs)) / ppd
-                        guard a > -1 else { continue }
+                        // Past 180°, on very tall screens, it's under the horizon behind us: nothing shines there.
+                        guard a > -1 && a < 181 else { continue }
                         let past = a > 90  // over the zenith: the sky behind, upside down
-                        let al = Double(past ? 180 - a : a) * .pi / 180
+                        let up = past ? 180 - a : a  // the true altitude
+                        let al = Double(up) * .pi / 180
                         let az = Double(viewAz + (Float(i * gs) - w2) / ppd + (past ? 180 : 0)) * .pi / 180
                         let v = Vec3(cos(al) * sin(az), cos(al) * cos(az), sin(al))
-                        let fade = powf(10, -0.1 * (airmass(a) - 1))
+                        let fade = powf(10, -0.1 * (airmass(up) - 1))
                         var c = RGB(0, 0, 0)
                         if mwGain > 0 {
                             let gal = toGalactic.apply(v)

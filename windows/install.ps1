@@ -78,6 +78,11 @@ $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path $csc)) { throw "No C# compiler at $csc (it ships with .NET Framework 4.x, part of Windows 10 and 11)." }
 
 New-Item -ItemType Directory -Force -Path $app | Out-Null
+# A running follower (or a tick it started) holds the helper open; stop it so it can be replaced.
+Stop-ScheduledTask -TaskName 'SkyWallpaperFollow' -ErrorAction SilentlyContinue
+Get-Process -Name 'sky-apply', 'sky' -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -and $_.Path.StartsWith($app, [StringComparison]::OrdinalIgnoreCase) } |
+    Stop-Process -Force -ErrorAction SilentlyContinue
 $sources = @(Get-ChildItem -Path (Join-Path $PSScriptRoot 'src') -Filter '*.cs' | ForEach-Object { $_.FullName })
 function Compile([string]$target, [string]$name) {
     & $csc /nologo /optimize+ /codepage:65001 "/target:$target" "/out:$(Join-Path $app $name)" $sources
@@ -111,6 +116,11 @@ Remove-Item -Path (Join-Path $app 'task.txt') -ErrorAction SilentlyContinue
 & $sky tick --force
 if ($LASTEXITCODE -ne 0) { throw "Setting up failed; see $app\sky.log." }
 
+# The follower: asleep until a monitor is plugged in or changed, then it
+# puts the current frame on it instead of whatever Windows remembered.
+& $sky follow-task
+if ($LASTEXITCODE -ne 0) { throw "Setting up the follower failed; see $app\sky.log." }
+
 Write-Host ''
-Write-Host "Installed: task 'SkyWallpaper'. Frames and helper: $app"
+Write-Host "Installed: tasks 'SkyWallpaper' and 'SkyWallpaperFollow'. Frames and helper: $app"
 if ($located) { Write-Host 'Sunrise and sunset follow your location; the day renders at 00:05.' }

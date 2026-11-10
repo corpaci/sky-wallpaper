@@ -833,12 +833,14 @@ sealed class Scene
                 for (int i = 0; i < gw; i++)
                 {
                     float a = (horizon - j * gs) / ppd;
-                    if (!(a > -1)) continue;
+                    // Past 180°, on very tall screens, it's under the horizon behind us: nothing shines there.
+                    if (!(a > -1 && a < 181)) continue;
                     bool past = a > 90;  // over the zenith: the sky behind, upside down
-                    double al = (past ? 180 - a : a) * Math.PI / 180;
+                    float up = past ? 180 - a : a;  // the true altitude
+                    double al = up * Math.PI / 180;
                     double az = (viewAz + (i * gs - w2) / ppd + (past ? 180 : 0)) * Math.PI / 180;
                     var v = new Vec3(Math.Cos(al) * Math.Sin(az), Math.Cos(al) * Math.Cos(az), Math.Sin(al));
-                    float fade = Col.Pow(10, -0.1f * (NightSky.Airmass(a) - 1));
+                    float fade = Col.Pow(10, -0.1f * (NightSky.Airmass(up) - 1));
                     var c = new RGB(0, 0, 0);
                     if (mwGain > 0)
                     {

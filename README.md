@@ -24,8 +24,8 @@ animates. macOS swaps the frames itself (a
 dynamic HEIC). On Windows, Task Scheduler starts a tiny helper at each
 switch time; it sets the frame and exits. The installed versions render
 each day once, shortly after midnight: under a minute of low-priority CPU.
-On macOS, a small helper also stays loaded, but asleep: it wakes only when
-you switch desktops.
+On both, a small helper also stays loaded, but asleep: it wakes only when
+you switch desktops (macOS) or plug in or change a monitor.
 
 No dependencies. Same inputs, same frames.
 
@@ -103,9 +103,14 @@ pass them yourself:
 powershell -ExecutionPolicy Bypass -File windows\install.ps1 -Latitude 48.2 -Longitude 16.4 -NoWeather
 ```
 
-- Everything lives in `%LOCALAPPDATA%\SkyWallpaper`, plus one scheduled task,
-  `SkyWallpaper`. The task switches frames, renders the new day at 00:05,
-  and catches up at logon, unlock and wake.
+- Everything lives in `%LOCALAPPDATA%\SkyWallpaper`, plus two scheduled
+  tasks. `SkyWallpaper` switches frames, renders the new day at 00:05, and
+  catches up at logon, unlock and wake. `SkyWallpaperFollow` runs from logon,
+  asleep (about 20 MB) until a monitor is plugged in, turned or changed; then
+  it puts the current frame on it, where Windows would show whatever that
+  monitor had last time. A monitor of a new size gets the closest frames at
+  once and its own a minute later; its size is remembered (`screens.txt`), so
+  each day renders for it even when it's unplugged at 00:05.
 - Without a location, it uses fixed `-Sunrise 07:20 -Sunset 17:55`, and
   still renders each day, for that day's moon and stars.
 

@@ -10,7 +10,7 @@ static class NightSky
     /// overhead, about 10 at 5°, 40 at the horizon.
     public static float Airmass(float alt)
     {
-        float s = (float)Math.Sin(Math.Max(alt, 0) * (float)Math.PI / 180);
+        float s = Math.Max((float)Math.Sin(Math.Max(alt, 0) * (float)Math.PI / 180), 0);  // never below the horizon, whatever the angle
         return 1 / (s + 0.025f * Col.Exp(-11 * s));
     }
 
