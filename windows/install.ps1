@@ -13,7 +13,15 @@
   forecast comes from Open-Meteo (one request a day, carrying the date and
   your coordinates rounded to 0.1 degrees, about 10 km) unless -NoWeather.
   Without one, the fixed -Sunrise/-Sunset apply. Run with no parameters and
-  it asks for your town instead.
+  it asks for your town instead, whether to render on battery, and last for
+  any extra arguments: secret words (-Extra) that change how the sky
+  behaves. Which words there are isn't written down; the code keeps only
+  their hashes.
+
+  Each new day renders on battery too, but not with battery saver on,
+  unless -NotOnBattery or -InBatterySaver say otherwise. When it doesn't
+  render, the last day's frames stay up until the PC is plugged in (or
+  battery saver goes off).
 
   No admin rights needed. uninstall.ps1 (also kept in
   %LOCALAPPDATA%\SkyWallpaper) undoes everything and puts your previous
@@ -34,7 +42,10 @@ param(
     [switch]$NoWeather,
     [ValidatePattern('^\d{2}:\d{2}$')][string]$Sunrise = '07:20',
     [ValidatePattern('^\d{2}:\d{2}$')][string]$Sunset = '17:55',
-    [int]$Seed = 7
+    [int]$Seed = 7,
+    [string[]]$Extra = @(),
+    [switch]$NotOnBattery,
+    [switch]$InBatterySaver
 )
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -43,7 +54,7 @@ $ErrorActionPreference = 'Stop'
 # sunset and weather can follow it. The town is looked up once at
 # open-meteo.com; only its coordinates, rounded to 0.1 degree, are kept.
 $bound = $PSBoundParameters  # inside Where-Object, $PSBoundParameters would be the block's own
-$given = @('Latitude', 'Longitude', 'Sunrise', 'Sunset') | Where-Object { $bound.ContainsKey($_) }
+$given = @('Latitude', 'Longitude', 'Sunrise', 'Sunset', 'Extra', 'NotOnBattery', 'InBatterySaver') | Where-Object { $bound.ContainsKey($_) }
 if (-not $given) {
     Write-Host 'Sky wallpaper: sunrise, sunset and weather can follow where you are.'
     Write-Host 'Your town is looked up once at open-meteo.com; only rounded coordinates are kept.'
@@ -65,6 +76,13 @@ if (-not $given) {
     if (-not [double]::IsNaN($Latitude) -and -not $NoWeather) {
         $answer = Read-Host 'Show the hourly weather (one small request to open-meteo.com a day)? [Y/n]'
         if ($answer -match '^[nN]') { $NoWeather = $true }
+    }
+    # Rendering a day takes a minute or so of the CPU.
+    $answer = Read-Host 'Render each new day on battery too? If not, the last one stays up until you plug in. [Y/n]'
+    if ($answer -match '^[nN]') { $NotOnBattery = $true }
+    else {
+        $answer = Read-Host 'Even with battery saver on? [y/N]'
+        if ($answer -match '^[yY]') { $InBatterySaver = $true }
     }
 }
 
@@ -92,6 +110,23 @@ Compile 'exe' 'sky.exe'           # console: for you and this script
 Compile 'winexe' 'sky-apply.exe'  # windowless: for the scheduled task
 Copy-Item -Path (Join-Path $PSScriptRoot 'uninstall.ps1') -Destination $app -Force  # removal without the download
 
+# Extra arguments: words the helper knows only by their hashes, so it checks them.
+function Test-Extra([string[]]$words) {
+    & $sky extra $words | Out-Null
+    return $LASTEXITCODE -eq 0
+}
+$Extra = @($Extra | ForEach-Object { $_ -split '\s+' } | Where-Object { $_ })
+if ($Extra -and -not (Test-Extra $Extra)) { throw 'Unknown -Extra argument.' }
+if (-not $given) {
+    while ($true) {
+        $answer = Read-Host 'Any extra arguments? (Enter to skip)'
+        $words = @($answer -split '\s+' | Where-Object { $_ })
+        if (-not $words) { break }
+        if (Test-Extra $words) { $Extra = $words; Write-Host 'Got it.'; break }
+        Write-Host 'Not something this knows. Try again, or press Enter to skip.'
+    }
+}
+
 # What `sky tick` reads.
 $inv = [Globalization.CultureInfo]::InvariantCulture
 $config = @("seed=$Seed")
@@ -102,6 +137,9 @@ if ($located) {
 } else {
     $config += "sunrise=$Sunrise", "sunset=$Sunset"
 }
+$config += 'battery=' + $(if ($NotOnBattery) { 'no' } else { 'yes' })
+$config += 'saver=' + $(if ($InBatterySaver -and -not $NotOnBattery) { 'yes' } else { 'no' })
+if ($Extra) { $config += 'extras=' + ($Extra -join ' ') }
 Set-Content -Path (Join-Path $app 'config.txt') -Value $config -Encoding ASCII
 
 # Remember the wallpapers from before the first install, for uninstall.ps1.

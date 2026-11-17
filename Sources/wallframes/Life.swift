@@ -24,7 +24,8 @@ struct Life {
     init() {}
 
     /// `day` numbers the date; `starNight` says a meteor shower peaks tonight.
-    init(day: Int, seed: UInt32, minute: Int, sun: SunModel, season: Season, sky: Sky, starNight: Bool) {
+    /// `extras` holds the bits of the --extra words given (see Extras).
+    init(day: Int, seed: UInt32, minute: Int, sun: SunModel, season: Season, sky: Sky, starNight: Bool, extras: UInt32 = 0) {
         self.seed = hash32(UInt32(truncatingIfNeeded: day) &* 0x9e3779b1 ^ seed)
         var rng = SplitMix(state: UInt64(self.seed) &* 0x9e3779b97f4a7c15 | 1)
         let alt = sun.altitude(minute), phase = sun.dayPhase(minute) ?? -1, year = season.year
@@ -59,6 +60,25 @@ struct Life {
         case .rainWalk?: if within(0.25, 0.8) && wet { outing = .rainWalk; at = way * (1.5 + where_) }
         case .stargaze?: if alt < -12 && (minute >= 20 * 60 + 30 || minute < 60) && starry { outing = .stargaze; at = way * (2 + 4 * where_) }
         case nil: break
+        }
+        // Extra 0. Its own stream of draws, so the visitors stay as they were.
+        if extras & 1 != 0 && outing == nil {
+            var busy = SplitMix(state: UInt64(self.seed ^ 0x6a09e667) &* 0x9e3779b97f4a7c15 | 1)
+            let skip = busy.unit(), gaze = busy.unit(), w1 = busy.unit(), w2 = busy.unit(), w3 = busy.unit(), w4 = busy.unit()
+            let dir: Float = busy.unit() < 0.5 ? -1 : 1
+            let twilight = phase < 0 && alt > -4
+            if (phase >= 0 && phase < 0.25) || (twilight && !evening) {
+                if skip < 0.7 || skip >= 0.9 { outing = wet ? .rainWalk : snowy ? .stroll : .run; at = dir * (2.5 + 2 * w1) }
+            } else if phase >= 0.25 && phase <= 0.75 {
+                if skip < 0.9 {
+                    if snowy { outing = .ski; at = -(4 + 8 * w2) }
+                    else { outing = wet ? .rainWalk : .hike; at = dir < 0 ? -(7 + 6 * w2) : 5.5 + 2 * w2 }
+                }
+            } else if phase > 0.75 || (twilight && evening) {
+                outing = wet ? .rainWalk : .stroll; at = dir * (1.6 + 1.2 * w3)
+            } else if gaze < 0.75 && alt < -12 && (minute >= 20 * 60 + 30 || minute < 60) && starry {
+                outing = .stargaze; at = dir * (2 + 4 * w4)
+            }
         }
         if outing == .rainWalk && at == 0 { at = way * (1.5 + where_) }
         facing = side()

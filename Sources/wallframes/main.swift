@@ -1,6 +1,6 @@
 // wallframes — render one day of landscape frames for a dynamic wallpaper.
 //
-//   wallframes [--size 2560x1664] [--seed 7] [--out frames] [--dry-run]
+//   wallframes [--size 2560x1664] [--seed 7] [--out frames] [--dry-run] [--extra WORD]...
 //              [--sunrise 07:20 --sunset 17:55 | --lat 48.2 --lon 16.4
 //               [--date yyyy-MM-dd] [--utc-offset MINUTES]]
 //
@@ -10,14 +10,15 @@
 // sunrise and sunset are computed (for today unless --date says otherwise);
 // otherwise the fixed times apply. The moon, planets and stars are the real
 // ones for that date and place (without --lat/--lon, 45° north at the time
-// zone's longitude). --dry-run prints the schedule only.
+// zone's longitude). --dry-run prints the schedule only. --extra takes one
+// of the secret words in Extras.swift; any other word is an error.
 
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
 let usage = """
-    usage: wallframes [--size WIDTHxHEIGHT] [--seed N] [--out DIR] [--dry-run]
+    usage: wallframes [--size WIDTHxHEIGHT] [--seed N] [--out DIR] [--dry-run] [--extra WORD]...
                       [--sunrise HH:MM --sunset HH:MM | --lat DEG --lon DEG
                        [--date yyyy-MM-dd] [--utc-offset MINUTES]]
     """
@@ -49,7 +50,7 @@ func writePNG(_ rgbx: [UInt8], width: Int, height: Int, to url: URL) {
 }
 
 var width = 2560, height = 1664, sunrise = 7 * 60 + 20, sunset = 17 * 60 + 55
-var seed: UInt32 = 7, outDir = "frames", dryRun = false
+var seed: UInt32 = 7, outDir = "frames", dryRun = false, extras: UInt32 = 0
 var latitude: Double?, longitude: Double?, date: String?, utcOffset: Int?, forcedSky: Sky?
 var fetchWeather = false, forecastFile: String?
 var args = CommandLine.arguments.dropFirst()
@@ -73,6 +74,10 @@ while let flag = args.popFirst() {
         guard let s = UInt32(value) else { fail("--seed wants a whole number") }
         seed = s
     case "--out": outDir = value
+    case "--extra":
+        let bit = Extras.bit(value)
+        guard bit != 0 else { fail("--extra: not a word this knows") }
+        extras |= bit
     case "--lat":
         guard let v = Double(value), (-90...90).contains(v) else { fail("--lat wants degrees north, -90 to 90") }
         latitude = v
@@ -220,7 +225,7 @@ for (i, frame) in frames.enumerated() {
     let sky = Ephemeris(latitude: skyLatitude, longitude: skyLongitude, d: d)
     let season = forecast?.ground(baseSeason, hour: frame.minute / 60) ?? baseSeason
     let meteors = meteorShower(month: ymd[1], day: ymd[2], minute: frame.minute)
-    let life = Life(day: dayIndex, seed: seed, minute: frame.minute, sun: sun, season: season, sky: frame.sky, starNight: meteors != nil)
+    let life = Life(day: dayIndex, seed: seed, minute: frame.minute, sun: sun, season: season, sky: frame.sky, starNight: meteors != nil, extras: extras)
     let pixels = scene.render(minute: frame.minute, sun: sun, sky: sky, season: season, meteors: meteors, life: life,
                               salt: hash32(UInt32(i) &+ seed), weather: Weather(frame.sky))
     writePNG(pixels, width: width, height: height, to: dir.appendingPathComponent(name))

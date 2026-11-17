@@ -32,7 +32,8 @@ sealed class Life
     public Life() { }
 
     /// `day` numbers the date; `starNight` says a meteor shower peaks tonight.
-    public Life(int day, uint seed, int minute, SunModel sun, Season season, Sky sky, bool starNight)
+    /// `extras` holds the bits of the --extra words given (see Extras).
+    public Life(int day, uint seed, int minute, SunModel sun, Season season, Sky sky, bool starNight, uint extras = 0)
     {
         Seed = Col.Hash32(unchecked((uint)day * 0x9e3779b1 ^ seed));
         var rng = new SplitMix(unchecked(((ulong)Seed * 0x9e3779b97f4a7c15) | 1));
@@ -76,6 +77,34 @@ sealed class Life
                 case Activity.Ride: if (within(0.3f, 0.75f) && !wet) Outing = Activity.Ride; break;
                 case Activity.RainWalk: if (within(0.25f, 0.8f) && wet) { Outing = Activity.RainWalk; At = way * (1.5f + where); } break;
                 case Activity.Stargaze: if (alt < -12 && (minute >= 20 * 60 + 30 || minute < 60) && starry) { Outing = Activity.Stargaze; At = way * (2 + 4 * where); } break;
+            }
+        }
+        // Extra 0. Its own stream of draws, so the visitors stay as they were.
+        if ((extras & 1) != 0 && !Outing.HasValue)
+        {
+            var busy = new SplitMix(unchecked(((ulong)(Seed ^ 0x6a09e667u) * 0x9e3779b97f4a7c15) | 1));
+            float skip = busy.Unit(), gaze = busy.Unit(), w1 = busy.Unit(), w2 = busy.Unit(), w3 = busy.Unit(), w4 = busy.Unit();
+            float dir = busy.Unit() < 0.5f ? -1 : 1;
+            bool twilight = phase < 0 && alt > -4;
+            if ((phase >= 0 && phase < 0.25f) || (twilight && !evening))
+            {
+                if (skip < 0.7f || skip >= 0.9f) { Outing = wet ? Activity.RainWalk : snowy ? Activity.Stroll : Activity.Run; At = dir * (2.5f + 2 * w1); }
+            }
+            else if (phase >= 0.25f && phase <= 0.75f)
+            {
+                if (skip < 0.9f)
+                {
+                    if (snowy) { Outing = Activity.Ski; At = -(4 + 8 * w2); }
+                    else { Outing = wet ? Activity.RainWalk : Activity.Hike; At = dir < 0 ? -(7 + 6 * w2) : 5.5f + 2 * w2; }
+                }
+            }
+            else if (phase > 0.75f || (twilight && evening))
+            {
+                Outing = wet ? Activity.RainWalk : Activity.Stroll; At = dir * (1.6f + 1.2f * w3);
+            }
+            else if (gaze < 0.75f && alt < -12 && (minute >= 20 * 60 + 30 || minute < 60) && starry)
+            {
+                Outing = Activity.Stargaze; At = dir * (2 + 4 * w4);
             }
         }
         if (Outing == Activity.RainWalk && At == 0) At = way * (1.5f + where);

@@ -2,6 +2,7 @@
 // uses to put a freshly packed HEIC up, and to put the old one back.
 
 import AppKit
+import IOKit.ps
 
 /// Each screen with its size in pixels (points × backing scale).
 func screens() -> [(screen: NSScreen, width: Int, height: Int)] {
@@ -53,7 +54,9 @@ func setWallpapers(_ files: [URL], onlyChanges: Bool = false) throws -> [String]
 /// showing, and with full-screen apps that is often not a desktop at all; so
 /// whenever you switch Spaces, wake the Mac, come back to your session or
 /// change screens, each screen gets the newest sky in `dir` unless it shows
-/// it already. Event-driven: no timers, asleep in between.
+/// it already. When the Mac is plugged in or leaves Low Power Mode, the
+/// daily job runs, in case it held back today's render. Event-driven: no
+/// timers, asleep in between.
 func follow(_ dir: URL) -> Never {
     func say(_ line: String) {
         FileHandle.standardOutput.write(Data("\(Date().formatted(.iso8601)) \(line)\n".utf8))
@@ -81,10 +84,7 @@ func follow(_ dir: URL) -> Never {
         if !lines.contains(size) {
             try? ((lines + [size]).joined(separator: "\n") + "\n").write(to: known, atomically: true, encoding: .utf8)
         }
-        let job = Process()
-        job.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        job.arguments = ["kickstart", "gui/\(getuid())/local.sky-wallpaper"]
-        do { try job.run(); say("no sky for \(size) yet; asked the daily job to render one") }
+        do { try startDailyJob(); say("no sky for \(size) yet; asked the daily job to render one") }
         catch { say("cannot start the daily job: \(error.localizedDescription)") }
     }
     var pending = false
@@ -111,6 +111,7 @@ func follow(_ dir: URL) -> Never {
     }
     NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                            object: nil, queue: .main) { _ in check() }
+    watchPower()
     say("following \(dir.path)")
     check()
     app.run()
@@ -168,4 +169,44 @@ func restoreWallpapers(from file: URL) {
         catch { fail("cannot restore \(path): \(error.localizedDescription)") }
         print("\(s.width)x\(s.height): restored \(path)")
     }
+}
+
+/// Starts the daily job now; it renders what today still lacks, or sets it again.
+func startDailyJob() throws {
+    let job = Process()
+    job.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+    job.arguments = ["kickstart", "gui/\(getuid())/local.sky-wallpaper"]
+    try job.run()
+}
+
+/// On battery power now, as far as macOS says.
+func onBattery() -> Bool {
+    guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+          let type = IOPSGetProvidingPowerSourceType(info)?.takeUnretainedValue() else { return false }
+    return (type as String) == "Battery Power"
+}
+
+// The last power state seen, so only a change to mains or out of Low Power
+// Mode starts the job (the power source callback also fires as the charge
+// level moves). Globals: the IOKit callback is a C function and can't capture.
+private var lastPower = (battery: false, lowPower: false)
+
+private func powerChanged() {
+    let now = (battery: onBattery(), lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled)
+    let better = (lastPower.battery && !now.battery) || (lastPower.lowPower && !now.lowPower)
+    lastPower = now
+    guard better else { return }
+    let line: String
+    do { try startDailyJob(); line = "power back; asked the daily job to catch up" }
+    catch { line = "cannot start the daily job: \(error.localizedDescription)" }
+    FileHandle.standardOutput.write(Data("\(Date().formatted(.iso8601)) \(line)\n".utf8))
+}
+
+private func watchPower() {
+    lastPower = (onBattery(), ProcessInfo.processInfo.isLowPowerModeEnabled)
+    if let source = IOPSNotificationCreateRunLoopSource({ _ in powerChanged() }, nil)?.takeRetainedValue() {
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .defaultMode)
+    }
+    NotificationCenter.default.addObserver(forName: .NSProcessInfoPowerStateDidChange,
+                                           object: nil, queue: .main) { _ in powerChanged() }
 }

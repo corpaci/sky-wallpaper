@@ -11,6 +11,11 @@
 # If the forecast can't be fetched, today renders without weather rather
 # than not at all.
 #
+# On battery or in Low Power Mode, the config may say not to render (BATTERY,
+# SAVER): then the newest sky of an earlier day stays up, and a new screen
+# makes do with the closest size. The follower starts this job again when
+# the Mac is plugged in or Low Power Mode goes off. --force renders anyway.
+#
 # macOS sets a wallpaper per Space (desktop), and only the ones showing can
 # be set. Other Spaces keep an earlier day's sky until they are showing
 # during a run; their files are kept until nothing points at them.
@@ -19,7 +24,7 @@ set -euo pipefail
 app=${SKY_APP:-"$HOME/Library/Application Support/SkyWallpaper"}
 bin="$app/bin"
 # shellcheck source=/dev/null
-source "$app/config"  # LAT, LON, WEATHER (yes|no), SEED
+source "$app/config"  # LAT, LON, WEATHER, BATTERY, SAVER (yes|no), SEED, EXTRAS (words for --extra)
 
 force=no set=yes
 for arg in "$@"; do
@@ -33,6 +38,12 @@ done
 day=$(date +%F)
 mkdir -p "$app/out"
 
+hold=no
+if [ "$force" = no ]; then
+    [ "${BATTERY:-yes}" = no ] && [[ "$(pmset -g ps 2>/dev/null)" == *"'Battery Power'"* ]] && hold=yes
+    [ "${SAVER:-yes}" = no ] && [ "$(pmset -g 2>/dev/null | awk '$1 == "lowpowermode" { v = $2 } END { print v }')" = 1 ] && hold=yes
+fi
+
 # Every screen size seen so far, not just the ones listed now: a closed lid or
 # a sleeping display drops out of the list at 00:05.
 known="$app/screens"
@@ -44,13 +55,20 @@ printf '%s\n' "$sizes" > "$known"
 # per Space and this may be one an earlier run missed.
 stamp=$(date +%F-%H%M)  # a new path each render: macOS caches wallpapers by path
 work="$app/work"
-made=() rendered=()
+made=() rendered=() held=()
 for size in $sizes; do
     have=$(ls -t "$app"/out/sky-"$size"-"$day"-*.heic 2>/dev/null | head -1 || true)
     if [ -n "$have" ] && [ "$force" = no ]; then made+=("$have"); continue; fi
+    if [ "$hold" = yes ]; then
+        last=$(ls -t "$app"/out/sky-"$size"-*.heic 2>/dev/null | head -1 || true)
+        [ -z "$last" ] || made+=("$last")
+        held+=("$size")
+        continue
+    fi
     frames="$work/$size"
     rm -rf "${frames:?}"
     args=(--size "$size" --lat "$LAT" --lon "$LON" --seed "$SEED" --out "$frames")
+    for word in ${EXTRAS:-}; do args+=(--extra "$word"); done
     if [ "$WEATHER" = yes ] && "$bin/wallframes" "${args[@]}" --weather >/dev/null; then
         :
     else
@@ -62,13 +80,15 @@ for size in $sizes; do
     rendered+=("$size")
 done
 rm -rf "${work:?}"
-if [ ${#rendered[@]} -gt 0 ]; then
+if [ ${#held[@]} -gt 0 ]; then
+    echo "$(date '+%F %T') on battery or in Low Power Mode: not rendering $day for ${held[*]}; keeping the last sky"
+elif [ ${#rendered[@]} -gt 0 ]; then
     echo "$(date '+%F %T') rendered $day for ${rendered[*]}"
 else
     echo "$(date '+%F %T') today's sky exists"
 fi
 
-if [ "$set" = yes ]; then
+if [ "$set" = yes ] && [ ${#made[@]} -gt 0 ]; then
     "$bin/heicpack" --set "${made[@]}"
     # Delete only what no Space or display points at any more. If the
     # wallpaper store can't be read, delete nothing.

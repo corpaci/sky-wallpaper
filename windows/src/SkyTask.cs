@@ -1,7 +1,8 @@
 // The scheduled task, as Task Scheduler XML registered with schtasks.exe. It
 // runs `sky-apply.exe tick`: daily at each switch time, at 00:05 (when tick
 // renders the new day and rewrites these triggers), and to catch up at logon,
-// unlock and wake. Low priority; never wakes the PC.
+// unlock, wake and when the power source changes. Low priority; never wakes
+// the PC.
 
 using System;
 using System.Collections.Generic;
@@ -15,10 +16,11 @@ static class SkyTask
 {
     public const string Name = "SkyWallpaper";
 
-    // Resume from sleep, and leaving Modern Standby.
+    // Resume from sleep, leaving Modern Standby, and a change of power source
+    // (plugged in: a day held back on battery renders now).
     const string WakeQuery = "<QueryList><Query Id=\"0\" Path=\"System\">"
         + "<Select Path=\"System\">*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and EventID=1]]</Select>"
-        + "<Select Path=\"System\">*[System[Provider[@Name='Microsoft-Windows-Kernel-Power'] and EventID=507]]</Select>"
+        + "<Select Path=\"System\">*[System[Provider[@Name='Microsoft-Windows-Kernel-Power'] and (EventID=507 or EventID=105)]]</Select>"
         + "</Query></QueryList>";
 
     public static string Xml(string date, IEnumerable<int> minutes, string user, string exe, bool wake)

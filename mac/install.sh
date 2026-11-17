@@ -7,20 +7,30 @@
 # switches the frames from there.
 #
 #   mac/install.sh [--lat 48.2 --lon 16.4] [--no-weather] [--seed 7]
+#                  [--not-on-battery | --in-low-power] [--extra WORD]...
 #
 # Without --lat/--lon it uses your time zone's city (from zone.tab).
+# Each new day renders on battery too, but not in Low Power Mode, unless
+# --not-on-battery or --in-low-power say otherwise; when it doesn't, the
+# last day's sky stays up until the Mac is plugged in (or Low Power Mode
+# goes off). Run in a terminal, it asks about those, and last for any extra
+# arguments: secret words that change how the sky behaves. Which words there
+# are isn't written down; the code keeps only their hashes.
 # mac/uninstall.sh removes it all and puts your previous wallpaper back.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-lat="" lon="" weather=yes seed=7
+lat="" lon="" weather=yes seed=7 battery=yes saver=no power_asked=no extras=() asked=no
 while [ $# -gt 0 ]; do
     case "$1" in
         --lat) lat=$2; shift 2 ;;
         --lon) lon=$2; shift 2 ;;
         --no-weather) weather=no; shift ;;
         --seed) seed=$2; shift 2 ;;
-        *) echo "usage: mac/install.sh [--lat DEG --lon DEG] [--no-weather] [--seed N]" >&2; exit 2 ;;
+        --not-on-battery) battery=no saver=no power_asked=yes; shift ;;
+        --in-low-power) battery=yes saver=yes power_asked=yes; shift ;;
+        --extra) extras+=("$2"); asked=yes; shift 2 ;;
+        *) echo "usage: mac/install.sh [--lat DEG --lon DEG] [--no-weather] [--seed N] [--not-on-battery | --in-low-power] [--extra WORD]..." >&2; exit 2 ;;
     esac
 done
 
@@ -44,13 +54,44 @@ agent="$HOME/Library/LaunchAgents/local.sky-wallpaper.plist"
 follower="$HOME/Library/LaunchAgents/local.sky-wallpaper.follow.plist"
 
 swift build -c release --quiet
+
+# Rendering a day keeps the CPU busy for a minute or so.
+if [ "$power_asked" = no ] && [ -t 0 ]; then
+    read -r -p "Render each new day on battery too? If not, the last one stays up until you plug in. [Y/n] " answer
+    if [[ "$answer" =~ ^[nN] ]]; then
+        battery=no
+    else
+        read -r -p "Even in Low Power Mode? [y/N] " answer
+        if [[ "$answer" =~ ^[yY] ]]; then saver=yes; fi
+    fi
+fi
+
+# Extra arguments: the renderer knows them only by their hashes, so it checks them.
+known_extras() {
+    local args=() w
+    for w in "$@"; do args+=(--extra "$w"); done
+    .build/release/wallframes --dry-run "${args[@]}" >/dev/null 2>&1
+}
+if [ ${#extras[@]} -gt 0 ] && ! known_extras "${extras[@]}"; then
+    echo "unknown --extra argument" >&2; exit 2
+fi
+if [ "$asked" = no ] && [ -t 0 ]; then
+    while true; do
+        read -r -p "Any extra arguments? (Enter to skip) " answer
+        read -r -a words <<<"$answer"
+        [ ${#words[@]} -gt 0 ] || break
+        if known_extras "${words[@]}"; then extras=("${words[@]}"); echo "Got it."; break; fi
+        echo "Not something this knows. Try again, or press Enter to skip."
+    done
+fi
 # Stop both jobs before their files are replaced.
 for label in local.sky-wallpaper local.sky-wallpaper.follow; do
     launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
 done
 mkdir -p "$app/bin"
 # A new renderer or new settings mean today's sky is rendered again.
-config=$(printf 'LAT=%s\nLON=%s\nWEATHER=%s\nSEED=%s' "$lat" "$lon" "$weather" "$seed")
+config=$(printf 'LAT=%s\nLON=%s\nWEATHER=%s\nSEED=%s\nBATTERY=%s\nSAVER=%s\nEXTRAS="%s"' \
+    "$lat" "$lon" "$weather" "$seed" "$battery" "$saver" "${extras[*]:-}")
 changed=yes
 cmp -s .build/release/wallframes "$app/bin/wallframes" && [ -f "$app/config" ] \
     && [ "$(cat "$app/config")" = "$config" ] && changed=no
