@@ -107,6 +107,17 @@ shapes over the near hill (`Sprites.swift`), about two-thirds of the
 cabin's wall height; ridge scenes look for a gap between the trees within
 four cabin widths. Birds in the sky go behind the hills.
 
+**Extras** (`Extras.swift`, `Extras.cs`). Secret words, given with
+`--extra` (the installers ask for them last), that change how the sky
+behaves. Only hashes are kept: SHA-256 of `sky-wallpaper/extra/` plus the
+word, then 99,999 more rounds of SHA-256 on the digest, in lowercase hex.
+So the source names neither the words nor which does what; a word's place
+in the list is its bit, which the renderer hands on (e.g. to `Life`). Words
+are case-sensitive, and an unknown one is an error. An extra draws from its
+own random stream, so days without one render exactly as before. To add one,
+hash the word outside the repo and add the hex to both lists, in the same
+place.
+
 **Rare nights.** Meteor showers: the seven major ones, from noon on their
 peak date to noon the next day, with streaks 3–11° long fanning out from the
 radiant, as many as 10 a frame with the radiant high, a third under a bright

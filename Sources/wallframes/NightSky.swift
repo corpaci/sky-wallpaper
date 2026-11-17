@@ -5,7 +5,7 @@ import Foundation
 /// Air the light crosses, in zenith thicknesses (Rozenberg's fit): 1
 /// overhead, about 10 at 5°, 40 at the horizon.
 func airmass(_ alt: Float) -> Float {
-    let s = sinf(max(alt, 0) * .pi / 180)
+    let s = max(sinf(max(alt, 0) * .pi / 180), 0)  // never below the horizon, whatever the angle
     return 1 / (s + 0.025 * expf(-11 * s))
 }
 
