@@ -2,7 +2,7 @@
 // sky.exe (console, for people and the installer) and sky-apply.exe
 // (windowless, for Task Scheduler, so nothing flashes at switch time).
 //
-//   sky render [--size WxH]... [--seed N] [--dry-run] [--extra WORD]... --out DIR
+//   sky render [--size WxH]... [--seed N] [--scale 1|1.25|1.5|1.75|2] [--dry-run] [--extra WORD]... --out DIR
 //              [--sunrise HH:MM --sunset HH:MM | --lat DEG --lon DEG [--date yyyy-MM-dd] [--utc-offset MIN]]
 //   sky tick [--force]   what the scheduled task runs: render today if needed,
 //                        keep the task's switch times current, set the frame
@@ -106,7 +106,7 @@ sealed class FrameSet
 
 static class Program
 {
-    const string Usage = @"usage: sky render [--size WxH]... [--seed N] [--dry-run] [--extra WORD]... --out DIR
+    const string Usage = @"usage: sky render [--size WxH]... [--seed N] [--scale 1|1.25|1.5|1.75|2] [--dry-run] [--extra WORD]... --out DIR
            [--sunrise HH:MM --sunset HH:MM | --lat DEG --lon DEG [--date yyyy-MM-dd] [--utc-offset MIN]]
        sky apply DIR | sky frame DIR HH:MM [WxH] | sky schedule DIR | sky task-xml DIR
        sky tick [--force] | sky follow | sky follow-task | sky monitors | sky save FILE | sky restore FILE
@@ -223,7 +223,7 @@ static class Program
     /// path); re-registers the task when the frames changed, so tomorrow's
     /// triggers match today's sky; then sets the current frame and drops
     /// older frames. Reads config.txt beside the exe: lat, lon, weather
-    /// (yes|no), seed, or sunrise and sunset when there is no location,
+    /// (yes|no), seed, scale (--scale), or sunrise and sunset when there is no location,
     /// extras (--extra words, separated by spaces), and battery and saver
     /// (yes|no): whether to render on battery, and with battery saver on.
     static int Tick(bool force)
@@ -266,7 +266,7 @@ static class Program
         File.WriteAllLines(known, sizes);
         Func<string, List<string>, List<string>> withSizes = (outDir, list) =>
         {
-            var args = new List<string> { "--seed", get("seed", "7"), "--out", outDir };
+            var args = new List<string> { "--seed", get("seed", "7"), "--scale", get("scale", "1"), "--out", outDir };
             foreach (string word in get("extras", "").Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
                 args.AddRange(new[] { "--extra", word });
             args.AddRange(located
@@ -467,6 +467,7 @@ static class Program
         var sizes = new List<int[]>();
         int sunrise = 7 * 60 + 20, sunset = 17 * 60 + 55;
         uint seed = 7, extras = 0;
+        float scale = 1;
         string outDir = null, date = null, forecastFile = null;
         bool dryRun = false, fetchWeather = false;
         double? latitude = null, longitude = null;
@@ -494,6 +495,10 @@ static class Program
                     break;
                 case "--seed":
                     if (!uint.TryParse(value, out seed)) throw new UsageException("--seed wants a whole number");
+                    break;
+                case "--scale":
+                    if (!float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out scale) || !new[] { 1, 1.25f, 1.5f, 1.75f, 2 }.Contains(scale))
+                        throw new UsageException("--scale wants 1, 1.25, 1.5, 1.75 or 2");
                     break;
                 case "--out":
                     outDir = value;
@@ -662,7 +667,7 @@ static class Program
             string dir = Path.Combine(outDir, width + "x" + height);
             Directory.CreateDirectory(dir);
             var clock = Stopwatch.StartNew();
-            var scene = new Scene(width, height, seed);
+            var scene = new Scene(width, height, seed, scale);
             Console.WriteLine("scene {0}x{1}, seed {2}: {3:F2}s", width, height, seed, clock.Elapsed.TotalSeconds);
             var manifest = new List<string> {
                 Header(width, height, sunrise, sunset, dayNote, seed) + skyNote,

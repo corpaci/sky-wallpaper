@@ -53,4 +53,11 @@ for rare in "2026-08-12 120" "2028-12-31 60" "2026-05-27 120"; do
     mono "$tmp/sky.exe" render "${day[@]}" --out "$tmp/cs-$date" >/dev/null
     swift windows/compare.swift "$tmp/swift-$date" "$tmp/cs-$date/$size" || failed=1
 done
+# Scaled up (--scale): a bigger cabin, trees, people, sun and moon; the
+# stargazing night above, so the two of them are drawn too.
+echo "== scale 1.75"
+day=(--size "$size" --lat 52.5 --lon 13.4 --date 2026-08-12 --utc-offset 120 --scale 1.75)
+.build/release/wallframes "${day[@]}" --out "$tmp/swift-scaled" >/dev/null
+mono "$tmp/sky.exe" render "${day[@]}" --out "$tmp/cs-scaled" >/dev/null
+swift windows/compare.swift "$tmp/swift-scaled" "$tmp/cs-scaled/$size" || failed=1
 exit $failed

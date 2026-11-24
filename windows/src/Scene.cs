@@ -230,10 +230,15 @@ sealed class Scene
     readonly float[] glintPower; // drops on the wet meadow, full frame
     readonly byte[] glintHue;    // and the color each catches, 0 = violet … 255 = red
     readonly uint seed;
+    // How big the things in the landscape are drawn (--scale), as Windows
+    // scales its UI on small screens with many pixels: the cabin, trees,
+    // people, animals, sun and moon. The land and the mountains keep their size.
+    readonly float ui;
 
-    public Scene(int width, int height, uint seed)
+    public Scene(int width, int height, uint seed, float ui = 1)
     {
         this.seed = seed;
+        this.ui = ui;
         Width = width;
         Height = height;
         W = width;
@@ -244,7 +249,7 @@ sealed class Scene
         top = new float[Layers.Length * width * Sub];
         snowLine = new float[width];
         int near = Layers.Length - 1;
-        float cabinX = 0.73f * W, cabinHalf = 0.019f * H;
+        float cabinX = 0.73f * W, cabinHalf = 0.019f * H * ui;
 
         for (int l = 0; l < Layers.Length; l++)
         {
@@ -276,8 +281,8 @@ sealed class Scene
         Func<int, float, float> groundAt = (l, x) => ground[l * width + Math.Min(Math.Max((int)x, 0), width - 1)];
 
         // The cabin: walls, pitched roof, chimney; one window.
-        float cabinBase = groundAt(near, cabinX) + 0.004f * H;
-        float wallH = 0.024f * H, roofH = 0.020f * H;
+        float cabinBase = groundAt(near, cabinX) + 0.004f * H * ui;
+        float wallH = 0.024f * H * ui, roofH = 0.020f * H * ui;
         for (int i = 0; i < width * Sub; i++)
         {
             float cx = (i + 0.5f) / Sub - cabinX;
@@ -310,7 +315,7 @@ sealed class Scene
         foreach (float px in new[] { porch0 + 0.5f * (porch1 - porch0), porch1 })
         {
             float post = 0.045f * cabinHalf;
-            porch.Add(new Capsule(px, eave(px), px, groundAt(near, px) + 0.002f * H, post, post));
+            porch.Add(new Capsule(px, eave(px), px, groundAt(near, px) + 0.002f * H * ui, post, post));
         }
         for (int k = 1; k < 6; k++)
         {
@@ -335,7 +340,7 @@ sealed class Scene
             if (layer.Trees <= 0) continue;
             uint s = Col.Hash32(unchecked(seed * 0x2545f491 + (uint)l));
             var rng = new SplitMix(unchecked(((ulong)s * 0x9e3779b97f4a7c15) | 1));
-            float tallest = layer.Trees * H;
+            float tallest = layer.Trees * H * ui;
             float tx = -tallest;
             uint n = 0;
             while (tx < W + tallest)
@@ -371,7 +376,7 @@ sealed class Scene
         float[] heroSize = { 0.105f, 0.075f, 0.088f };
         for (int k = 0; k < 3; k++)
         {
-            float th = heroSize[k] * H;
+            float th = heroSize[k] * H * ui;
             Stamp(Spruce(heroAt[k], groundAt(near, heroAt[k]) + 0.03f * th, th, Col.Hash32(seed ^ unchecked((uint)(k + 1) * 0x85ebca6b)), 2),
                   trees, near, width, height);
         }
@@ -380,7 +385,7 @@ sealed class Scene
         float[] fruitAt = { cabinX - 2.4f * cabinHalf, porch1 + 1.2f * cabinHalf }, fruitSize = { 0.045f, 0.04f };
         for (int k = 0; k < 2; k++)
         {
-            float th = fruitSize[k] * H, fb = groundAt(near, fruitAt[k]) + 0.016f * H;
+            float th = fruitSize[k] * H * ui, fb = groundAt(near, fruitAt[k]) + 0.016f * H * ui;
             var tree = new LeafyTree(fruitAt[k], fb, th, Col.Hash32(seed ^ unchecked((uint)(k + 7) * 0x27d4eb2f)), true);
             tree.StampInto(trees, near, leaves, leafShade, leafInfo, near - 2, width, height, th);
             leafy.Add(new Leafy { L = near, X = fruitAt[k], Base = fb, Rx = tree.CrownRx, Species = tree.Species });
@@ -421,7 +426,7 @@ sealed class Scene
             float x = flowerRng.Unit() * W;
             float gy = ground[near * width + Math.Min((int)x, width - 1)];
             float t = flowerRng.Unit();
-            flowerX[i] = x; flowerY[i] = gy + 3 + t * (H - gy - 3); flowerR[i] = (0.5f + 1.1f * t) * H / 1664;
+            flowerX[i] = x; flowerY[i] = gy + 3 + t * (H - gy - 3); flowerR[i] = (0.5f + 1.1f * t) * H / 1664 * ui;
             flowerN[i] = (uint)(flowerRng.Next() >> 32);
         }
         // Fireflies, low over the meadow and along the trees.
@@ -433,13 +438,13 @@ sealed class Scene
             float gy = ground[near * width + Math.Min((int)x, width - 1)];
             float u = flyRng.Unit();
             flyX[i] = x;
-            flyY[i] = gy - 0.05f * H * u * u + 0.03f * H * flyRng.Unit();
+            flyY[i] = gy - 0.05f * H * ui * u * u + 0.03f * H * ui * flyRng.Unit();
             flyK[i] = 0.4f + 0.6f * flyRng.Unit();
         }
 
         // Ice in the cold air after snow ("diamond dust"): tiny points that
         // catch the light, the big near ones rarer. Drawn only after snow.
-        float scale = H / 1664;
+        float scale = H / 1664 * ui;
         flakes = new float[width * height];
         var flakeRng = new SplitMix(unchecked(((ulong)seed * 0xd1b54a32d192ed03) | 1));
         int flakeCount = width * height / 9000;
@@ -659,7 +664,7 @@ sealed class Scene
         float veil = (1 - 0.85f * w.Overcast) * (1 - 0.5f * w.Fog);
         float p = dayPhase.HasValue ? dayPhase.Value : (evening ? 1 : 0);
         float sunX = W * (0.5f + (p - 0.5f) * 0.8f * side), sunY = horizonY - sunAlt / SunModel.Peak * span;
-        float sunR = 0.021f * H;
+        float sunR = 0.021f * H * ui;
         float sunVis = Col.Smoothstep(-1.5f, 0.5f, sunAlt) * (1 - w.Overcast) * (1 - 0.5f * w.Fog);
         RGB sunColor = Col.Mix(Palettes.At(sunAlt, evening).Glow * 1.6f, new RGB(1, 0.97f, 0.9f) * 1.4f, Col.Smoothstep(2, 20, sunAlt));
         // The moon's disk in front of the drawn sun, at the drawn sun's scale,
@@ -682,14 +687,14 @@ sealed class Scene
         float day = Col.Smoothstep(0, 15, alt);
         // The glare close around the sun shrinks with what the moon leaves of it.
         float gNear = (0.44f * low + 0.28f * day) * veil * (0.2f + 0.8f * uncovered), gFar = (0.40f * low + 0.10f * day) * veil, gBand = 0.30f * low * veil;
-        float rNear = 0.06f * H, rFar = 0.32f * H, bandH = 0.07f * H, bandW = 0.55f * W;
+        float rNear = 0.06f * H * ui, rFar = 0.32f * H, bandH = 0.07f * H, bandW = 0.55f * W;
 
         // The moon, where it is, lit from where the sun is: pale by day; by
         // night it hides the stars behind it, and earthshine lights its dark
         // side, most in a thin crescent, when the Earth is nearly full in its sky.
         // Low over the horizon it looks bigger, as the real one seems to: up
         // to 42% wider, back to its usual size by 30°.
-        float moonR = 0.0217f * H * (1 + 0.42f * (1 - Col.Smoothstep(2, 30, moon.Alt)));
+        float moonR = 0.0217f * H * ui * (1 + 0.42f * (1 - Col.Smoothstep(2, 30, moon.Alt)));
         float moonVis = (1 - 0.95f * w.Overcast) * (1 - 0.5f * w.Fog) * Col.Smoothstep(-1.5f, -0.5f, moon.Alt) * Col.Smoothstep(3, 5, sunMoon);
         float opaque = Col.Smoothstep(6, -6, alt);
         float moonGain = 0.3f + 0.7f * opaque;
@@ -723,7 +728,7 @@ sealed class Scene
         int skyRows = Math.Min(Height, (int)horizonY + 2), width = Width;
         var starPower = new float[width * skyRows];
         var starBV = new float[width * skyRows];  // B−V weighted by light, for each pixel's color
-        float scale = H / 1664;
+        float scale = H / 1664, thing = scale * ui;  // stars keep their size; things on the land grow with ui
         // A point of light as a small Gaussian, its total the same wherever it
         // falls between pixels: `peak` is its height at `sigma`.
         Action<float, float, float, float, float> splat = (x, y, peak, sigma, bv) =>
@@ -1057,7 +1062,7 @@ sealed class Scene
         summit.MeadowTint = new RGB(pal.Land.R * 1.3f, pal.Land.G * 1.2f, pal.Land.B * 0.85f);
         summit.SnowAlt = snowAlt;
         RGB apple = RGB.Hex(0xc8302a);
-        int snowAbove = Math.Max((int)Math.Round(2.5f * scale, MidpointRounding.AwayFromZero), 1);  // how far above a branch to look for open air: how deep the snow
+        int snowAbove = Math.Max((int)Math.Round(2.5f * thing, MidpointRounding.AwayFromZero), 1);  // how far above a branch to look for open air: how deep the snow
         RGB snowOnTop = Col.Mix(snowGround, new RGB(1, 1, 1), 0.3f);
         RGB frostColor = Col.MixOklab(pal.Mid, new RGB(1, 1, 1), 0.55f) * 1.1f;
         float frostGlint = season.Frost * Col.Smoothstep(-2, 4, alt) * 0.7f;
@@ -1067,7 +1072,7 @@ sealed class Scene
         int near = Layers.Length - 1;
         float nearTop = float.MaxValue;
         for (int x = 0; x < width; x++) nearTop = Math.Min(nearTop, ground[near * width + x]);
-        var nearOverlay = new Overlay(0, Math.Max((int)(nearTop - 0.16f * H), 0), width, Height);
+        var nearOverlay = new Overlay(0, Math.Max((int)(nearTop - 0.16f * H * ui), 0), width, Height);
         float bloom = season.Flowers * (1 - groundSnow);
         if (bloom > 0 && daylight > 0)
         {
@@ -1081,20 +1086,20 @@ sealed class Scene
             RGB flyColor = RGB.Hex(0xd4ff6a);
             for (int i = 0; i < flyX.Length; i++)
             {
-                nearOverlay.Glow(flyX[i], flyY[i], Math.Max(0.9f * scale, 0.7f), flyColor * (0.5f * flyK[i] * fireflyGain));
-                nearOverlay.Glow(flyX[i], flyY[i], 3.5f * scale, flyColor * (0.04f * flyK[i] * fireflyGain));
+                nearOverlay.Glow(flyX[i], flyY[i], Math.Max(0.9f * thing, 0.7f), flyColor * (0.5f * flyK[i] * fireflyGain));
+                nearOverlay.Glow(flyX[i], flyY[i], 3.5f * thing, flyColor * (0.04f * flyK[i] * fireflyGain));
             }
         }
         // The cabin's things. The bikes stay home unless their riders are out.
         Func<uint, RGB> litNear = hex => inLayer(RGB.Hex(hex), near);
         float panelGlint = Col.Smoothstep(25, 3, alt) * Col.Smoothstep(-1, 2, alt) * (sunX < cabin.X ? 1 : 0.3f) * (1 - w.Overcast);
-        Things.DrawCabin(nearOverlay, cabin, H, groundSnow, litNear, pal.Mid, panelGlint, life.BikesHome);
+        Things.DrawCabin(nearOverlay, cabin, H * ui, groundSnow, litNear, pal.Mid, panelGlint, life.BikesHome);
         // The two of them, when they're out, and whoever's visiting (Life.cs).
         Func<float, float> ridge = rx => ground[near * width + Math.Min(Math.Max((int)rx, 0), width - 1)];
         Func<float, float, float> clearing = (x0, half) =>
         {
             // The nearest place where no tree stands on the ridge, away from the cabin.
-            int rows = (int)(0.04f * H);
+            int rows = (int)(0.04f * H * ui);
             Func<float, bool> open = ox =>
             {
                 if (!(ox > 0.04f * W && ox < 0.96f * W && Math.Abs(ox - cabin.X) > 2.5f * cabin.HalfWidth + half)) return false;
@@ -1114,8 +1119,8 @@ sealed class Scene
             }
             return float.NaN;  // none: they stay on the meadow
         };
-        life.Draw(nearOverlay, cabin, H, W, season.Year, groundSnow > 0.3f, ridge, clearing, litNear, windowLight);
-        Overlay skyBirds = life.DrawSky(W, H, Col.MixOklab(pal.Land * 0.7f, pal.Mid, 0.3f));
+        life.Draw(nearOverlay, cabin, H * ui, W, season.Year, groundSnow > 0.3f, ridge, clearing, litNear, windowLight);
+        Overlay skyBirds = life.DrawSky(W, H, ui, Col.MixOklab(pal.Land * 0.7f, pal.Mid, 0.3f));
         // Fallen leaves on the ground around the leafy trees, gathering as
         // the trees let them go, browning through winter, until snow covers
         // them or spring's grass grows over them.
@@ -1123,7 +1128,7 @@ sealed class Scene
         float carpetBrown = season.Year > 0.75f ? 0.3f + 0.3f * Col.Smoothstep(0.86f, 1, season.Year) : 0.6f + 0.3f * Col.Smoothstep(0, 0.2f, season.Year);
         var carpetCell = new int[Layers.Length];
         for (int l = 0; l < Layers.Length; l++)
-            carpetCell[l] = Math.Max((int)Math.Round(0.0016f * H * Layers[l].Trees / Layers[near].Trees, MidpointRounding.AwayFromZero), 1);
+            carpetCell[l] = Math.Max((int)Math.Round(0.0016f * H * ui * Layers[l].Trees / Layers[near].Trees, MidpointRounding.AwayFromZero), 1);
         Overlay overNear = nearOverlay;
 
         var px = new byte[Width * Height * 3];
@@ -1184,7 +1189,7 @@ sealed class Scene
                 {
                     float mx = fx - moon.X, my = fy - moon.Y;
                     float md = Col.Sqrt(mx * mx + my * my);
-                    RGB halo = moonGlow * (haloGain * Col.Exp(-md / (0.05f * H)));
+                    RGB halo = moonGlow * (haloGain * Col.Exp(-md / (0.05f * H * ui)));
                     c = c + halo;
                     float disk = Col.Clamp01(moonR - md + 0.5f) * moonVis;
                     if (disk > 0)
@@ -1254,7 +1259,7 @@ sealed class Scene
                         {
                             inFruitTree = leafInfo[li] >> 5 == 5;
                             float presence;
-                            leafColor = Leaves.Look(leafShade[li], leafInfo[li], season, x, y, H, out presence);
+                            leafColor = Leaves.Look(leafShade[li], leafInfo[li], season, x, y, H * ui, out presence);
                             leafCov = leaves[li] / 255f * presence;
                         }
                     }
@@ -1294,7 +1299,7 @@ sealed class Scene
                         // on the near meadow a few blown far out from it.
                         float amount = 0, pool = 0;  // pool: under a crown, not blown out
                         int species = 0;
-                        float ragged = 0.75f + 0.5f * Col.ValueNoise2(fx / (0.01f * H), fy / (0.004f * H), 0x4b1d);
+                        float ragged = 0.75f + 0.5f * Col.ValueNoise2(fx / (0.01f * H * ui), fy / (0.004f * H * ui), 0x4b1d);
                         for (int q = 0; q < 4; q++)
                         {
                             int ti = litterBy[(l * width + x) * 4 + q];
@@ -1306,7 +1311,7 @@ sealed class Scene
                             pool = Math.Max(pool, la);
                             if (l == near && fy > lt.Base)
                             {
-                                la = Math.Max(la, 0.15f * gone * Col.Exp(-Math.Abs(lu) / 3 - (fy - lt.Base) / (0.05f * H))
+                                la = Math.Max(la, 0.15f * gone * Col.Exp(-Math.Abs(lu) / 3 - (fy - lt.Base) / (0.05f * H * ui))
                                     * Col.Smoothstep(5.5f, 3.5f, Math.Abs(fx - lt.X) / lt.Rx));
                             }
                             if (la > amount) { amount = la; species = lt.Species; }
@@ -1365,7 +1370,7 @@ sealed class Scene
                     {
                         // And on the roof.
                         float depth = fy - top[(l * width + x) * Sub + Sub / 2];
-                        tone = Col.Mix(tone, snowOnTop, 0.9f * groundSnow * Col.Smoothstep(0.005f * H, 0.003f * H, depth));
+                        tone = Col.Mix(tone, snowOnTop, 0.9f * groundSnow * Col.Smoothstep(0.005f * H * ui, 0.003f * H * ui, depth));
                     }
                     if (l == 1 && rangeSnow > 0)
                     {
@@ -1444,7 +1449,7 @@ sealed class Scene
                     float inside = Col.Clamp01(Math.Min(Math.Min(fx - wx0, wx1 - fx), Math.Min(fy - wy0, wy1 - fy)) + 0.5f);
                     c = Col.Mix(c, windowColor, inside * windowLight);
                     float wdx = fx - windowX, wdy = fy - windowY;
-                    c = c + windowColor * (0.08f * windowLight * Col.Exp(-Col.Sqrt(wdx * wdx + wdy * wdy) / (0.012f * H)));
+                    c = c + windowColor * (0.08f * windowLight * Col.Exp(-Col.Sqrt(wdx * wdx + wdy * wdy) / (0.012f * H * ui)));
                 }
 
                 if (w.Snow > 0)

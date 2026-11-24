@@ -12,8 +12,10 @@
   With a location, sunrise and sunset follow it every day, and the hourly
   forecast comes from Open-Meteo (one request a day, carrying the date and
   your coordinates rounded to 0.1 degrees, about 10 km) unless -NoWeather.
-  Without one, the fixed -Sunrise/-Sunset apply. Run with no parameters and
-  it asks for your town instead, whether to render on battery, and last for
+  Without one, the fixed -Sunrise/-Sunset apply. -Scale (1 to 2) draws the
+  cabin, trees, people, sun and moon bigger, as Windows scales its UI. Run
+  with no parameters and it asks for your town instead, the scale (offering
+  your display's), whether to render on battery, and last for
   any extra arguments: secret words (-Extra) that change how the sky
   behaves. Which words there are isn't written down; the code keeps only
   their hashes.
@@ -43,6 +45,7 @@ param(
     [ValidatePattern('^\d{2}:\d{2}$')][string]$Sunrise = '07:20',
     [ValidatePattern('^\d{2}:\d{2}$')][string]$Sunset = '17:55',
     [int]$Seed = 7,
+    [ValidateSet('1', '1.25', '1.5', '1.75', '2')][string]$Scale = '1',
     [string[]]$Extra = @(),
     [switch]$NotOnBattery,
     [switch]$InBatterySaver
@@ -54,7 +57,7 @@ $ErrorActionPreference = 'Stop'
 # sunset and weather can follow it. The town is looked up once at
 # open-meteo.com; only its coordinates, rounded to 0.1 degree, are kept.
 $bound = $PSBoundParameters  # inside Where-Object, $PSBoundParameters would be the block's own
-$given = @('Latitude', 'Longitude', 'Sunrise', 'Sunset', 'Extra', 'NotOnBattery', 'InBatterySaver') | Where-Object { $bound.ContainsKey($_) }
+$given = @('Latitude', 'Longitude', 'Sunrise', 'Sunset', 'Scale', 'Extra', 'NotOnBattery', 'InBatterySaver') | Where-Object { $bound.ContainsKey($_) }
 if (-not $given) {
     Write-Host 'Sky wallpaper: sunrise, sunset and weather can follow where you are.'
     Write-Host 'Your town is looked up once at open-meteo.com; only rounded coordinates are kept.'
@@ -76,6 +79,22 @@ if (-not $given) {
     if (-not [double]::IsNaN($Latitude) -and -not $NoWeather) {
         $answer = Read-Host 'Show the hourly weather (one small request to open-meteo.com a day)? [Y/n]'
         if ($answer -match '^[nN]') { $NoWeather = $true }
+    }
+    # Bigger cabin, trees and people for small screens with many pixels,
+    # offered at the scale Windows uses for its own UI (100% is 96 dpi).
+    $scales = @('1', '1.25', '1.5', '1.75', '2')
+    $suggest = '1'
+    try {
+        $dpi = (Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name AppliedDPI -ErrorAction Stop).AppliedDPI
+        $suggest = $scales | Sort-Object { [Math]::Abs([double]$_ - $dpi / 96.0) } | Select-Object -First 1
+    } catch {}
+    while ($true) {
+        $answer = Read-Host "Draw the cabin, trees, people, sun and moon bigger, as Windows scales its text? 1, 1.25, 1.5, 1.75 or 2 [$suggest]"
+        if (-not $answer) { $Scale = $suggest; break }
+        $answer = $answer.Trim().TrimEnd('x', '%')
+        if ($answer -match '^\d{3}$') { $answer = ([double]$answer / 100).ToString($([Globalization.CultureInfo]::InvariantCulture)) }
+        if ($scales -contains $answer) { $Scale = $answer; break }
+        Write-Host 'One of 1, 1.25, 1.5, 1.75 or 2, please.'
     }
     # Rendering a day takes a minute or so of the CPU.
     $answer = Read-Host 'Render each new day on battery too? If not, the last one stays up until you plug in. [Y/n]'
@@ -129,7 +148,7 @@ if (-not $given) {
 
 # What `sky tick` reads.
 $inv = [Globalization.CultureInfo]::InvariantCulture
-$config = @("seed=$Seed")
+$config = @("seed=$Seed", "scale=$Scale")
 if ($located) {
     $config += 'lat=' + [Math]::Round($Latitude, 1).ToString($inv)
     $config += 'lon=' + [Math]::Round($Longitude, 1).ToString($inv)

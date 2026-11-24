@@ -1,6 +1,6 @@
 // wallframes — render one day of landscape frames for a dynamic wallpaper.
 //
-//   wallframes [--size 2560x1664] [--seed 7] [--out frames] [--dry-run] [--extra WORD]...
+//   wallframes [--size 2560x1664] [--seed 7] [--scale 1] [--out frames] [--dry-run] [--extra WORD]...
 //              [--sunrise 07:20 --sunset 17:55 | --lat 48.2 --lon 16.4
 //               [--date yyyy-MM-dd] [--utc-offset MINUTES]]
 //
@@ -11,14 +11,17 @@
 // otherwise the fixed times apply. The moon, planets and stars are the real
 // ones for that date and place (without --lat/--lon, 45° north at the time
 // zone's longitude). --dry-run prints the schedule only. --extra takes one
-// of the secret words in Extras.swift; any other word is an error.
+// of the secret words in Extras.swift; any other word is an error. --scale
+// (1, 1.25, 1.5, 1.75 or 2) draws the cabin, trees, people, animals, sun
+// and moon that much bigger, as Windows scales its UI on small screens with
+// many pixels; the land and the mountains keep their size.
 
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
 let usage = """
-    usage: wallframes [--size WIDTHxHEIGHT] [--seed N] [--out DIR] [--dry-run] [--extra WORD]...
+    usage: wallframes [--size WIDTHxHEIGHT] [--seed N] [--scale 1|1.25|1.5|1.75|2] [--out DIR] [--dry-run] [--extra WORD]...
                       [--sunrise HH:MM --sunset HH:MM | --lat DEG --lon DEG
                        [--date yyyy-MM-dd] [--utc-offset MINUTES]]
     """
@@ -50,7 +53,7 @@ func writePNG(_ rgbx: [UInt8], width: Int, height: Int, to url: URL) {
 }
 
 var width = 2560, height = 1664, sunrise = 7 * 60 + 20, sunset = 17 * 60 + 55
-var seed: UInt32 = 7, outDir = "frames", dryRun = false, extras: UInt32 = 0
+var seed: UInt32 = 7, outDir = "frames", dryRun = false, extras: UInt32 = 0, scale: Float = 1
 var latitude: Double?, longitude: Double?, date: String?, utcOffset: Int?, forcedSky: Sky?
 var fetchWeather = false, forecastFile: String?
 var args = CommandLine.arguments.dropFirst()
@@ -73,6 +76,9 @@ while let flag = args.popFirst() {
     case "--seed":
         guard let s = UInt32(value) else { fail("--seed wants a whole number") }
         seed = s
+    case "--scale":
+        guard let s = Float(value), [1, 1.25, 1.5, 1.75, 2].contains(s) else { fail("--scale wants 1, 1.25, 1.5, 1.75 or 2") }
+        scale = s
     case "--out": outDir = value
     case "--extra":
         let bit = Extras.bit(value)
@@ -207,7 +213,7 @@ catch { fail("cannot create \(dir.path): \(error.localizedDescription)") }
 if let forecastBody { try? forecastBody.write(to: dir.appendingPathComponent("forecast.json")) }
 
 let start = Date()
-let scene = Scene(width: width, height: height, seed: seed)
+let scene = Scene(width: width, height: height, seed: seed, ui: scale)
 print(String(format: "scene %dx%d, seed %u: %.2fs", width, height, seed, Date().timeIntervalSince(start)))
 
 var manifest = """
