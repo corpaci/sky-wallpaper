@@ -1,285 +1,218 @@
+<div align="center">
+
 # Sky wallpaper
 
-A dynamic wallpaper for macOS and Windows. It renders a day of a snowcapped
-massif, its ridges and faces catching the light as the sun moves, above
-spruce and leafy woods and a little cabin with a porch, as still frames, and
-shows the right one for the time of day. The night sky is the real one: the
-moon in its phase and place, the planets, the bright stars, the Milky Way,
-meteor showers and eclipses on their nights. The year turns: blossom, green,
-autumn colors, fallen leaves, snow. Two people live in the cabin and go out
-now and then; deer, a fox, hares, hedgehogs, birds and, rarely, a bear with
-her cubs come by. Optionally, it follows your real sunrise, sunset and
-hourly weather.
+**A living landscape for your desktop.**<br>
+A snowcapped massif, a cabin in the woods and the real sky above it,<br>
+drawn fresh every day for where you are.
 
-![The frames of one clear October day, from midnight to night](docs/preview.jpg)
-![Overcast as a sea of clouds, after rain, fog lakes, cloudy as a broken sea, the morning after snow](docs/weather.jpg)
-![The cabin's hill in April blossom, July, late October, early November, bare January, and after snow](docs/seasons.jpg)
+![macOS 14+](https://img.shields.io/badge/macOS-14%2B-1f2a44?style=flat-square&logo=apple&logoColor=white)
+![Windows 10 · 11](https://img.shields.io/badge/Windows-10%20%C2%B7%2011-1f2a44?style=flat-square&logo=windows&logoColor=white)
+![No dependencies](https://img.shields.io/badge/dependencies-none-e8956b?style=flat-square)
+![CPU](https://img.shields.io/badge/CPU-under%201%20min%20a%20day-e8956b?style=flat-square)
+
+<img src="docs/day.webp" width="100%" alt="One clear October day, from midnight through dawn, noon and sunset to night">
+
+**[Install on macOS](#macos)** · **[Install on Windows](#windows)** · **[How it works](#how-it-works)**
+
+</div>
+
+<br>
+
+|  |  |
+|---|---|
+| 🌄 **The day** | 17 to 19 frames from midnight to night, on your real sunrise and sunset |
+| 🌌 **The night** | The real moon, planets, 2,847 stars and the Milky Way, plus meteor showers and eclipses on their nights |
+| 🍂 **The year** | Blossom, green leaves, autumn colours, fallen leaves, snow |
+| ⛅ **The weather** | Follows the hourly forecast, always seen from above the clouds |
+| 🏡 **Life** | Two people live in the cabin; deer, foxes, hares and, rarely, a bear come by |
+| 🪶 **Light** | Still images, not video: nothing animates, nothing runs between frames |
+
+## The year
+
+<img src="docs/seasons.webp" width="100%" alt="The cabin's hill through the year: April blossom, June, August, mid-October, late October, November, January">
+
+Maple, birch, beech, oak and linden bud in spring and turn one by one in autumn,
+from the top down. The apple trees by the cabin blossom in April. The summit's
+snow rises and falls with the year. South of the equator, it's all half a year on.
+
+## The weather
+
+<img src="docs/weather.webp" width="100%" alt="The same morning: clear, cloudy, overcast, fog, after rain with a rainbow, after snow">
+
+Grey days don't stay grey on your screen. When it's **overcast** you're above
+it: a sunlit sea of clouds. **Fog** lies in the far valleys. **Rain** shows the
+moment after, with a rainbow when the sun is low. **Snow** shows the clear
+morning after.
+
+## The night
+
+<img src="docs/moon.webp" width="100%" alt="Two weeks of October evenings: the moon grows from a crescent past full, night by night">
+
+Everything stands where it really is for your place and hour: the moon in its
+phase, Mercury to Saturn, every star brighter than magnitude 5.5, the Milky Way
+on dark nights. Meteor showers streak from their real radiants on their peak
+nights. An eclipse seen from your place gets its own frame at its peak.
+
+<details>
+<summary><b>More nights:</b> eclipses, meteor showers, the Milky Way</summary>
+<br>
+
 ![A crescent at dusk and a waning gibbous moon over Vienna; the July Milky Way over Vienna and over Sydney](docs/night.jpg)
 ![A partial solar eclipse at sunset over Berlin, totality at Luxor, a lunar eclipse rising over Berlin, the Geminids](docs/rare.jpg)
 
-**Why it's cheap:** the desktop shows a still image and swaps it at set
-times (17 to 19 a day, plus one per change in the weather, and one at an
-eclipse's peak); nothing
-animates. macOS swaps the frames itself (a
-dynamic HEIC). On Windows, Task Scheduler starts a tiny helper at each
-switch time; it sets the frame and exits. The installed versions render
-each day once, shortly after midnight: under a minute of low-priority CPU.
-On both, a small helper also stays loaded, but asleep: it wakes only when
-you switch desktops (macOS) or plug in or change a monitor.
+The view faces the equator and spans 240°. The moon is drawn about eight
+times its real size, as it looks to us, and bigger still near the horizon.
 
-No dependencies. Same inputs, same frames.
+</details>
+
+## Who lives there
+
+Two people. Now and then they go out: a stroll, a run, a hike or ski tour,
+a bike ride, a walk under a rainbow umbrella, stargazing on meteor nights.
+Visitors come at their own hours: deer at dawn and dusk, a fox, hares,
+hedgehogs on summer nights, swallows, geese, and, rarely, a bear with two cubs.
+
+<details>
+<summary><b>Close up</b></summary>
+<br>
+
+![The two of them out, and their visitors, close up](docs/life.jpg)
+
+Each day's plan follows from its date, so a day's frames tell one story. They're
+out in about 3% of frames, and the bear shows up about 25 times a year.
+
+</details>
+
+---
 
 ## macOS
 
 Needs macOS 14+ and Swift (`xcode-select --install`).
 
 ```bash
-git clone https://github.com/corpaci/sky-wallpaper.git
-cd sky-wallpaper
-```
-
-**Daily (follows sun and weather):**
-
-```bash
+git clone https://github.com/corpaci/sky-wallpaper.git && cd sky-wallpaper
 mac/install.sh --lat 48.2 --lon 16.4
 ```
 
-- Without `--lat/--lon`, it uses your time zone's city.
-- `--no-weather` keeps it offline; sunrise and sunset still follow the date.
-- `--scale 1.5` (1, 1.25, 1.5, 1.75 or 2) draws the cabin, trees, people,
-  animals, sun and moon that much bigger, the way display scaling makes text
-  bigger on a small screen with many pixels; the mountains and hills keep
-  their size. Run in a terminal, it asks.
-- On battery it still renders each new day, but not in Low Power Mode.
-  Run in a terminal, it asks; or pass `--not-on-battery` or
-  `--in-low-power`. A day it doesn't render keeps the last sky up until
-  the Mac is plugged in or Low Power Mode goes off; then it catches up.
-- Run in a terminal, it ends by asking for any extra arguments (or pass
-  `--extra WORD`). There are secret words that change how the sky
-  behaves; which ones isn't written down anywhere. Press Enter to skip.
-- A background job (launchd) runs at 00:05, at login, and on wake if it
-  missed 00:05. It renders the day for each screen, packs it and sets it.
-  The log is at `~/Library/Application Support/SkyWallpaper/daily.log`.
-- macOS only lets a program set the desktop (Space) that's showing, and
-  full-screen apps count as desktops. So a small helper stays loaded with no
-  timers: when you switch desktops, it puts today's sky on the one that comes
-  into view. It uses about 30 MB of memory and no CPU while idle; its log is
-  `follow.log` in the same folder.
-- `mac/uninstall.sh` removes it all and puts your previous wallpaper back.
+That's it. It renders each day at 00:05, at login and on wake, and follows your
+sun and weather. To remove it and get your old wallpaper back, run `mac/uninstall.sh`.
 
-**Static (fixed times, nothing installed):**
+<details>
+<summary><b>Options and details</b></summary>
+<br>
+
+| Flag | What it does |
+|---|---|
+| `--lat`, `--lon` | Your location. Without it: your time zone's city |
+| `--no-weather` | Stay offline; sunrise and sunset still follow the date |
+| `--scale 1.5` | Bigger cabin, trees, people, sun and moon for high-res small screens (1, 1.25, 1.5, 1.75 or 2) |
+| `--not-on-battery` | Skip rendering on battery |
+| `--in-low-power` | Render even in Low Power Mode |
+| `--extra WORD` | Secret words that change how the sky behaves. Which ones? Not written down anywhere. |
+
+Run in a terminal, the installer asks about scaling, battery and extras.
+
+- A day it skips (on battery, Low Power Mode) keeps the last sky up and
+  catches up when you plug in.
+- macOS only lets a program set the desktop that's showing, so a tiny helper
+  (about 30 MB, no CPU when idle) puts today's sky on each Space as you switch to it.
+- Logs: `~/Library/Application Support/SkyWallpaper/daily.log` and `follow.log`.
+- Screen saver: to keep the sky when idle, set Lock Screen → Start Screen
+  Saver when inactive → Never.
+
+**Static file, nothing installed:**
 
 ```bash
 SUNRISE=07:20 SUNSET=17:55 ./make.sh 2560x1664
-SCALE=1.5 ./make.sh 2560x1664   # bigger cabin, trees, people, sun and moon
+SCALE=1.5 ./make.sh 2560x1664
 ```
 
-Then go to System Settings → Wallpaper → add a photo → pick
-`out/sky-2560x1664-DATE.heic` → choose the dynamic option. Use one file per
-display. Its moon and stars stay those of the day you rendered it. For your pixel size: `system_profiler SPDisplaysDataType | grep Resolution`.
+Then System Settings → Wallpaper → add `out/sky-2560x1664-DATE.heic` → dynamic.
+One file per display; its moon and stars stay those of the day you rendered.
+To find your size: `system_profiler SPDisplaysDataType | grep Resolution`.
 
-**Screen saver:** it's a separate setting, and by default it plays a video.
-To keep the sky when idle, go to System Settings → Lock Screen → Start
-Screen Saver when inactive → Never. That's also the cheapest choice.
+</details>
 
 ## Windows
 
-Needs Windows 10 or 11, nothing else: the installer compiles its helper with
-the C# compiler built into Windows. No admin rights.
-
-**Easiest:** open PowerShell (Start → type "PowerShell") and paste:
+Needs Windows 10 or 11. Nothing else, and no admin rights. Open PowerShell and paste:
 
 ```powershell
 irm https://raw.githubusercontent.com/corpaci/sky-wallpaper/main/windows/get.ps1 | iex
 ```
 
-It downloads this project, asks for your town, and sets everything up in
-about a minute. Press Enter at the town question to use fixed times instead.
-[`get.ps1`](windows/get.ps1) is a short script you can read first.
+It asks for your town and is set up in about a minute ([`get.ps1`](windows/get.ps1)
+is short, so you can read it first). Or download the ZIP and double-click
+`windows\Install.cmd`. To remove it, double-click `windows\Uninstall.cmd`.
 
-**Or with the ZIP:** on GitHub, Code → Download ZIP. Unpack it and
-double-click `windows\Install.cmd`. If Windows says it protected your PC,
-choose More info → Run anyway.
-
-**To remove it** and get your old wallpaper back, double-click
-`windows\Uninstall.cmd`, or paste:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\SkyWallpaper\uninstall.ps1"
-```
-
-Run the installer again to change town or settings. To skip the questions,
-pass them yourself:
+<details>
+<summary><b>Options and details</b></summary>
+<br>
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File windows\install.ps1 -Latitude 48.2 -Longitude 16.4 -NoWeather
 ```
 
-- Everything lives in `%LOCALAPPDATA%\SkyWallpaper`, plus two scheduled
-  tasks. `SkyWallpaper` switches frames, renders the new day at 00:05, and
-  catches up at logon, unlock and wake. `SkyWallpaperFollow` runs from logon,
-  asleep (about 20 MB) until a monitor is plugged in, turned or changed; then
-  it puts the current frame on it, where Windows would show whatever that
-  monitor had last time. A monitor of a new size gets the closest frames at
-  once and its own a minute later; its size is remembered (`screens.txt`), so
-  each day renders for it even when it's unplugged at 00:05.
-- `-Scale 1.5` (1, 1.25, 1.5, 1.75 or 2) draws the cabin, trees, people,
-  animals, sun and moon that much bigger, as Windows scales its text and
-  apps; the mountains and hills keep their size. Asked, it suggests your
-  display's current scaling.
-- Without a location, it uses fixed `-Sunrise 07:20 -Sunset 17:55`, and
-  still renders each day, for that day's moon and stars.
-- On battery it still renders each new day, but not with battery saver on.
-  It asks; or pass `-NotOnBattery` or `-InBatterySaver`. A day it doesn't
-  render keeps the last frames up until the PC is plugged in (the task runs
-  when the power source changes) or battery saver goes off (next switch
-  time); then it catches up.
-- The last question is for any extra arguments (or pass `-Extra WORD`).
-  There are secret words that change how the sky behaves; which ones isn't
-  written down anywhere. Press Enter to skip.
+| Flag | What it does |
+|---|---|
+| `-Latitude`, `-Longitude` | Your location. Without it: fixed sunrise and sunset |
+| `-NoWeather` | Stay offline |
+| `-Sunrise`, `-Sunset` | Fixed times (default `07:20`, `17:55`) |
+| `-Scale 1.5` | Bigger cabin, trees, people, sun and moon, like display scaling. It suggests yours |
+| `-NotOnBattery` | Skip rendering on battery |
+| `-InBatterySaver` | Render even with battery saver on |
+| `-Extra WORD` | Secret words. You'll have to find them. |
 
-If the frame looks stale:
+- Everything lives in `%LOCALAPPDATA%\SkyWallpaper` plus two scheduled tasks:
+  `SkyWallpaper` switches frames and renders each day; `SkyWallpaperFollow`
+  (about 20 MB, asleep) wakes when a monitor is plugged in or changed.
+- Run the installer again to change town or settings.
+- If the frame looks stale:
 
 ```powershell
 Get-ScheduledTaskInfo SkyWallpaper | Format-List LastRunTime, LastTaskResult, NextRunTime
 Get-Content "$env:LOCALAPPDATA\SkyWallpaper\sky.log" -Tail 20
 ```
 
-`LastTaskResult` 0 means the last run worked. If you chose not to render on
-battery, an older day's frames are expected until you plug in.
+`LastTaskResult` 0 means it worked.
 
-## The night sky
+</details>
 
-Everything in the sky stands where it really is, for your place and the
-hour each frame shows:
-- **The moon:** its phase, its place, its lit side toward the sun, its
-  maria turned as you'd see them, earthshine on a thin crescent. A bright
-  moon turns the night blue and fades the faint stars. By day it's pale.
-- **Mercury to Saturn**, at their real brightness.
-- **2,847 stars**, every one brighter than magnitude 5.5 (the Yale Bright
-  Star Catalogue), in their colors, dimmed near the horizon.
-- **The Milky Way**, on dark moonless nights: its great star clouds, dark
-  dust lanes and pink glowing gas where they really are, grown out of noise
-  around them, so the shapes are a model, not a photograph. Also the
-  zodiacal light, the faint cone of sunlit dust along the planets' path.
+---
 
-The view faces the equator and spans 240°: north of it, from east-northeast
-on the left to west-northwest on the right, so a rising or setting moon is
-mostly in view. The moon is drawn about eight times its real size, the way
-it looks to us, and up to 42% bigger still near the horizon, where it seems
-bigger to us too. Without a location, the sky is drawn for 45° north at your
-time zone's longitude.
+## How it works
 
-## The seasons
+Your desktop shows **a still image** and swaps it at set times: 17 to 19 a day,
+plus one per change in the weather and one at an eclipse's peak.
 
-The year runs through the landscape, from the date (south of the equator,
-half a year on), or from the forecast where it says more:
-- **The summit's snow** rises and falls with the year, or follows the day's
-  freezing level. It lies on the gentler slopes and longest in the gullies,
-  while steep rock stays bare; low in winter, it reaches the rocky range's
-  peaks too.
-- **Leafy trees** stand among the spruces: maple, birch, beech, oak, linden,
-  each built its own way (an oak short and crooked under wide limbs, a birch
-  slender and white-barked under a light crown of hanging twigs). In spring
-  their buds break all over at once in pale green; in autumn each turns
-  through its own colors from the top down, and lets its leaves go a few at
-  a time, until it's bare. Oak and beech keep their low dead leaves until
-  spring. Two fruit trees by the cabin blossom white and pink in April and
-  bear apples in late summer.
-- **The ground:** fallen leaves color the floor under each tree, a few blow
-  out over the meadow, and they brown through winter; flowers come in spring and
-  summer, fireflies on warm midsummer nights; snow and morning frost lie where
-  the forecast has them, on the branches and the roof too.
+- **macOS** swaps the frames itself, from a dynamic HEIC.
+- **Windows:** Task Scheduler starts a tiny helper at each switch time; it sets
+  the frame and exits.
+- **Each day renders once**, shortly after midnight: under a minute of
+  low-priority CPU. Same inputs, same frames.
 
-Colors that come into the landscape (leaves, flowers, bark, the bikes) take
-on the light and air of the hill they're on, so they belong to the scene.
+## Privacy
 
-## Who lives there
+Weather comes from [Open-Meteo](https://open-meteo.com): free, no account, no key.
+Once a day, one request carries the date and your coordinates rounded to 0.1°
+(about 10 km). On Windows, the town you type is looked up there once.
+Nothing else leaves your machine.
 
-Two people live in the cabin: she in mostly green and black-and-white, with
-shoulder-length hair and glasses, and flowing skirts in spring and autumn;
-he in green and orange, a comfy green hat in winter, sunglasses in summer.
-Now and then they go out:
-- a stroll in the late afternoon, a run early in the morning, a hike or a
-  ski tour when there's snow, with backpacks when they're far from home;
-- a walk under one rainbow umbrella when it rains;
-- a bike ride (the bikes are gone from the porch);
-- on clear nights, and always on a meteor shower's night, stargazing on a
-  blanket on the ridge, with a telescope and a red headlamp.
+<details>
+<summary><b>For tinkerers</b></summary>
 
-Wild visitors come at their own hours: deer at dawn or dusk (a spotted fawn
-in early summer, a stag with antlers from August to March), a fox at dusk, a
-hare (white in winter), hedgehogs under the lit window on summer nights,
-birds on the snowy roof, swallows on summer evenings, geese in a V when
-they migrate, a buzzard circling, and, rarely, a bear with two cubs.
-
-![The two of them out, and their visitors, close up](docs/life.jpg)
-
-Each day's plan is fixed by its date, so a day's frames tell one story. Over
-a simulated four years they're out in about 3% of frames, on about 100 days
-a year, and a bear shows in about 25 frames a year.
-
-## Rare nights and days
-
-- **Meteor showers:** on the peak nights of the Quadrantids, Lyrids, Eta
-  Aquariids, Perseids, Orionids, Leonids and Geminids, streaks fan out from
-  the shower's real radiant: more the higher it stands, fewer under a
-  bright moon.
-- **Eclipses:** a day with an eclipse seen from your place gets a frame at
-  its greatest phase, its sky at that very minute. In a solar eclipse the
-  moon's disk crosses the sun's, turned as it really is; the light only
-  fails near totality, and at totality the sky goes to twilight, the stars
-  come out and the corona shows. In a lunar eclipse the Earth's shadow
-  crosses the moon and turns it copper.
-
-## Weather and privacy
-
-Grey weather isn't mirrored back at you, and no cloud ever covers the sky;
-the scene shows what's beyond the weather:
-- **Overcast:** you're above it. A sunlit sea of clouds covers the world
-  below, its base just over the trees by the cabin (only the tall spruces
-  reach into it), fraying over the hills beyond; the summit and far ridges
-  rise out of it, and sun, moon and stars are clear overhead.
-- **Fog:** fog lakes lie low in the far valleys under a clear sky.
-- **Rain:** the moment after. A rainbow stands opposite the sun while it's
-  low (from this view, at the far edge, with its faint second bow), in the
-  rain over the far range, and the wet grass glints in every color.
-- **Cloudy:** the same sea of clouds, broken: banks of cloud lie in the
-  valleys, with the hills showing between them.
-- **Snow:** the clear morning after: fresh snow on open ground, and ice
-  glittering in the air.
-
-The forecast also gives the temperature, the snow lying and the freezing
-level, for the seasons above.
-
-Weather comes from [Open-Meteo](https://open-meteo.com): free, no account,
-no key. Once a day, one request carries the date and your coordinates
-rounded to 0.1° (about 10 km). On Windows, the town you type at install is
-looked up once on Open-Meteo too. Nothing else leaves the machine. The response
-is kept beside the frames as `forecast.json`. Each frame takes its hour's
-sky, and an extra frame goes on every hour where the sky changes. If the
-forecast can't be fetched, the day renders without weather.
-
-## Options
-
-| What | macOS daily | macOS static | Windows | Default |
-|---|---|---|---|---|
-| Location | `--lat`, `--lon` | — | `-Latitude`, `-Longitude` | macOS: time zone's city; Windows: asks for your town |
-| Weather off | `--no-weather` | always off | `-NoWeather` | on, when located |
-| Fixed sunrise, sunset | — | `SUNRISE`, `SUNSET` | `-Sunrise`, `-Sunset` | `07:20`, `17:55` |
-| Landscape (another seed, other mountains) | `--seed` | `SEED` | `-Seed` | `7` |
-
-The renderers also run by hand. For example, this prints a day's schedule
-without rendering:
+### Render by hand
 
 ```bash
 .build/release/wallframes --dry-run --lat 48.2 --lon 16.4 --date 2026-12-21 --weather
 ```
 
-`--sky rain` forces one weather type for every frame. `--forecast FILE`
-reads a saved forecast.
+`--sky rain` forces one weather for every frame, `--forecast FILE` reads a
+saved forecast, `--seed 7` grows another landscape (`SEED` for `make.sh`,
+`-Seed` on Windows).
 
-## Your own images (macOS)
+### Your own images (macOS)
 
 Any same-size stills work. Write a manifest of local switch times:
 
@@ -296,7 +229,7 @@ Any same-size stills work. Write a manifest of local switch times:
 .build/release/heicpack --inspect mine.heic   # print any wallpaper's schedule
 ```
 
-## Changing the look
+### Changing the look
 
 The renderer exists twice, kept in step file by file: Swift
 (`Sources/wallframes/`) and C# (`windows/src/`). After changing either one,
@@ -310,20 +243,19 @@ tests/astronomy.sh    # eclipses, conjunctions and the like against known dates
 
 `data/bsc5-vmag5.5.tsv` is the star catalogue as downloaded; after changing
 it, `swift tools/stars.swift` rewrites the stars for both renderers.
+`tools/readme-media.sh` re-renders the animations on this page (needs ffmpeg).
 
-## Status
+### Status
 
-- **macOS:** the daily job and the desktop helper are installed and work on
-  the author's Mac, and the wallpaper stays dynamic. Still open: whether
-  macOS ever trims its own copies of past days' wallpapers, and the first
-  00:05 run.
-- **Windows:** the earlier version runs on a real PC. These haven't run on
-  Windows yet:
-  - the daily `tick` (rendering, re-registering the task, weather), though
-    it compiles and its task XML validates;
-  - the one-line and double-click installers.
+- **macOS:** runs daily on the author's Mac. Still open: whether macOS ever
+  trims its copies of past days, and the first 00:05 run.
+- **Windows:** the earlier version runs on a real PC. Not yet run on Windows:
+  the daily `tick` (it compiles and its task XML validates) and the one-line
+  and double-click installers.
 
 Details and measurements: [docs/NOTES.md](docs/NOTES.md).
+
+</details>
 
 ## Credits
 
