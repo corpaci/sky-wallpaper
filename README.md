@@ -46,6 +46,10 @@ mac/install.sh --lat 48.2 --lon 16.4
 
 - Without `--lat/--lon`, it uses your time zone's city.
 - `--no-weather` keeps it offline; sunrise and sunset still follow the date.
+- `--scale 1.5` (1, 1.25, 1.5, 1.75 or 2) draws the cabin, trees, people,
+  animals, sun and moon that much bigger, the way display scaling makes text
+  bigger on a small screen with many pixels; the mountains and hills keep
+  their size. Run in a terminal, it asks.
 - On battery it still renders each new day, but not in Low Power Mode.
   Run in a terminal, it asks; or pass `--not-on-battery` or
   `--in-low-power`. A day it doesn't render keeps the last sky up until
@@ -67,6 +71,7 @@ mac/install.sh --lat 48.2 --lon 16.4
 
 ```bash
 SUNRISE=07:20 SUNSET=17:55 ./make.sh 2560x1664
+SCALE=1.5 ./make.sh 2560x1664   # bigger cabin, trees, people, sun and moon
 ```
 
 Then go to System Settings → Wallpaper → add a photo → pick
@@ -118,6 +123,10 @@ powershell -ExecutionPolicy Bypass -File windows\install.ps1 -Latitude 48.2 -Lon
   monitor had last time. A monitor of a new size gets the closest frames at
   once and its own a minute later; its size is remembered (`screens.txt`), so
   each day renders for it even when it's unplugged at 00:05.
+- `-Scale 1.5` (1, 1.25, 1.5, 1.75 or 2) draws the cabin, trees, people,
+  animals, sun and moon that much bigger, as Windows scales its text and
+  apps; the mountains and hills keep their size. Asked, it suggests your
+  display's current scaling.
 - Without a location, it uses fixed `-Sunrise 07:20 -Sunset 17:55`, and
   still renders each day, for that day's moon and stars.
 - On battery it still renders each new day, but not with battery saver on.

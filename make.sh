@@ -10,6 +10,7 @@ cd "$(dirname "$0")"
 SUNRISE=${SUNRISE:-07:20}  # central Europe, late October; set your own
 SUNSET=${SUNSET:-17:55}
 SEED=${SEED:-7}            # another seed, another mountain range
+SCALE=${SCALE:-1}          # 1.25 to 2: a bigger cabin, trees, people, sun and moon
 QUALITY=${QUALITY:-0.95}   # below ~0.9 HEVC smooths away the anti-banding dither (README)
 
 sizes=("$@")
@@ -21,6 +22,6 @@ stamp=$(date +%Y-%m-%d)
 mkdir -p out
 for size in "${sizes[@]}"; do
     frames=build/frames-$size
-    "$bin/wallframes" --size "$size" --sunrise "$SUNRISE" --sunset "$SUNSET" --seed "$SEED" --out "$frames"
+    "$bin/wallframes" --size "$size" --sunrise "$SUNRISE" --sunset "$SUNSET" --seed "$SEED" --scale "$SCALE" --out "$frames"
     "$bin/heicpack" "$frames/manifest.txt" -o "out/sky-$size-$stamp.heic" --quality "$QUALITY"
 done

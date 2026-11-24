@@ -6,10 +6,13 @@
 # day's frames for each screen, packs them, and sets the wallpaper; macOS
 # switches the frames from there.
 #
-#   mac/install.sh [--lat 48.2 --lon 16.4] [--no-weather] [--seed 7]
+#   mac/install.sh [--lat 48.2 --lon 16.4] [--no-weather] [--seed 7] [--scale 1.5]
 #                  [--not-on-battery | --in-low-power] [--extra WORD]...
 #
 # Without --lat/--lon it uses your time zone's city (from zone.tab).
+# --scale (1, 1.25, 1.5, 1.75 or 2) draws the cabin, trees, people, animals,
+# sun and moon that much bigger, as display scaling does for text; the land
+# and the mountains keep their size. Run in a terminal, it asks.
 # Each new day renders on battery too, but not in Low Power Mode, unless
 # --not-on-battery or --in-low-power say otherwise; when it doesn't, the
 # last day's sky stays up until the Mac is plugged in (or Low Power Mode
@@ -20,17 +23,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-lat="" lon="" weather=yes seed=7 battery=yes saver=no power_asked=no extras=() asked=no
+lat="" lon="" weather=yes seed=7 scale="" battery=yes saver=no power_asked=no extras=() asked=no
 while [ $# -gt 0 ]; do
     case "$1" in
         --lat) lat=$2; shift 2 ;;
         --lon) lon=$2; shift 2 ;;
         --no-weather) weather=no; shift ;;
         --seed) seed=$2; shift 2 ;;
+        --scale) scale=$2; shift 2 ;;
         --not-on-battery) battery=no saver=no power_asked=yes; shift ;;
         --in-low-power) battery=yes saver=yes power_asked=yes; shift ;;
         --extra) extras+=("$2"); asked=yes; shift 2 ;;
-        *) echo "usage: mac/install.sh [--lat DEG --lon DEG] [--no-weather] [--seed N] [--not-on-battery | --in-low-power] [--extra WORD]..." >&2; exit 2 ;;
+        *) echo "usage: mac/install.sh [--lat DEG --lon DEG] [--no-weather] [--seed N] [--scale 1|1.25|1.5|1.75|2] [--not-on-battery | --in-low-power] [--extra WORD]..." >&2; exit 2 ;;
     esac
 done
 
@@ -54,6 +58,19 @@ agent="$HOME/Library/LaunchAgents/local.sky-wallpaper.plist"
 follower="$HOME/Library/LaunchAgents/local.sky-wallpaper.follow.plist"
 
 swift build -c release --quiet
+
+# Bigger things in the landscape, for small screens with many pixels.
+scales=" 1 1.25 1.5 1.75 2 "
+if [ -z "$scale" ] && [ -t 0 ]; then
+    while true; do
+        read -r -p "Draw the cabin, trees, people, sun and moon bigger, for a small screen with many pixels? 1, 1.25, 1.5, 1.75 or 2 [1] " answer
+        answer=${answer:-1}
+        if [[ "$scales" == *" $answer "* ]]; then scale=$answer; break; fi
+        echo "One of 1, 1.25, 1.5, 1.75 or 2, please."
+    done
+fi
+scale=${scale:-1}
+[[ "$scales" == *" $scale "* ]] || { echo "--scale wants 1, 1.25, 1.5, 1.75 or 2" >&2; exit 2; }
 
 # Rendering a day keeps the CPU busy for a minute or so.
 if [ "$power_asked" = no ] && [ -t 0 ]; then
@@ -90,8 +107,8 @@ for label in local.sky-wallpaper local.sky-wallpaper.follow; do
 done
 mkdir -p "$app/bin"
 # A new renderer or new settings mean today's sky is rendered again.
-config=$(printf 'LAT=%s\nLON=%s\nWEATHER=%s\nSEED=%s\nBATTERY=%s\nSAVER=%s\nEXTRAS="%s"' \
-    "$lat" "$lon" "$weather" "$seed" "$battery" "$saver" "${extras[*]:-}")
+config=$(printf 'LAT=%s\nLON=%s\nWEATHER=%s\nSEED=%s\nSCALE=%s\nBATTERY=%s\nSAVER=%s\nEXTRAS="%s"' \
+    "$lat" "$lon" "$weather" "$seed" "$scale" "$battery" "$saver" "${extras[*]:-}")
 changed=yes
 cmp -s .build/release/wallframes "$app/bin/wallframes" && [ -f "$app/config" ] \
     && [ "$(cat "$app/config")" = "$config" ] && changed=no

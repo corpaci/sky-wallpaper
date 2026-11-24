@@ -24,7 +24,7 @@ set -euo pipefail
 app=${SKY_APP:-"$HOME/Library/Application Support/SkyWallpaper"}
 bin="$app/bin"
 # shellcheck source=/dev/null
-source "$app/config"  # LAT, LON, WEATHER, BATTERY, SAVER (yes|no), SEED, EXTRAS (words for --extra)
+source "$app/config"  # LAT, LON, WEATHER, BATTERY, SAVER (yes|no), SEED, SCALE, EXTRAS (words for --extra)
 
 force=no set=yes
 for arg in "$@"; do
@@ -67,7 +67,7 @@ for size in $sizes; do
     fi
     frames="$work/$size"
     rm -rf "${frames:?}"
-    args=(--size "$size" --lat "$LAT" --lon "$LON" --seed "$SEED" --out "$frames")
+    args=(--size "$size" --lat "$LAT" --lon "$LON" --seed "$SEED" --scale "${SCALE:-1}" --out "$frames")
     for word in ${EXTRAS:-}; do args+=(--extra "$word"); done
     if [ "$WEATHER" = yes ] && "$bin/wallframes" "${args[@]}" --weather >/dev/null; then
         :

@@ -450,19 +450,20 @@ extension Life {
     }
 
     /// The birds in the sky: a skein of geese in a V on their way, or a
-    /// buzzard circling on a thermal. They fly behind the hills.
-    func drawSky(width: Float, H: Float, color: RGB) -> Overlay? {
+    /// buzzard circling on a thermal. They fly behind the hills, `ui` times
+    /// their usual size (Scene's --scale).
+    func drawSky(width: Float, H: Float, ui: Float, color: RGB) -> Overlay? {
         for v in visits where v.animal == .geese || v.animal == .buzzard {
             var r = SplitMix(state: UInt64(v.seed) | 1)
             let x = (0.15 + 0.7 * r.unit()) * width, y = (0.22 + 0.2 * r.unit()) * H
             if v.animal == .buzzard {
-                let span = 0.016 * H
+                let span = 0.016 * H * ui
                 var o = Overlay(x0: Int(x - span), y0: Int(y - span), x1: Int(x + span) + 1, y1: Int(y + span) + 1)
                 flyingBird(&o, x, y, span, -0.1, 0.16, color)
                 o.ellipse(x, y + 0.08 * span, 0.06 * span, 0.12 * span, 0, color)  // its fanned tail
                 return o
             }
-            let n = 7 + Int(r.unit() * 8), gap = 0.009 * H, span = 0.0065 * H, f = v.facing
+            let n = 7 + Int(r.unit() * 8), gap = 0.009 * H * ui, span = 0.0065 * H * ui, f = v.facing
             let reach = Float(n / 2 + 1) * gap
             var o = Overlay(x0: Int(x - 1.2 * reach - span), y0: Int(y - 0.6 * reach - span),
                             x1: Int(x + 1.2 * reach + span) + 1, y1: Int(y + 0.6 * reach + span) + 1)

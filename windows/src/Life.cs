@@ -563,8 +563,9 @@ sealed class Life
     }
 
     /// The birds in the sky: a skein of geese in a V on their way, or a
-    /// buzzard circling on a thermal. They fly behind the hills.
-    public Overlay DrawSky(float width, float H, RGB color)
+    /// buzzard circling on a thermal. They fly behind the hills, `ui` times
+    /// their usual size (Scene's --scale).
+    public Overlay DrawSky(float width, float H, float ui, RGB color)
     {
         foreach (Visit v in Visits)
         {
@@ -573,14 +574,14 @@ sealed class Life
             float x = (0.15f + 0.7f * r.Unit()) * width, y = (0.22f + 0.2f * r.Unit()) * H;
             if (v.Kind == Animal.Buzzard)
             {
-                float span = 0.016f * H;
+                float span = 0.016f * H * ui;
                 var b = new Overlay((int)(x - span), (int)(y - span), (int)(x + span) + 1, (int)(y + span) + 1);
                 FlyingBird(b, x, y, span, -0.1f, 0.16f, color);
                 b.Ellipse(x, y + 0.08f * span, 0.06f * span, 0.12f * span, 0, color);  // its fanned tail
                 return b;
             }
             int n = 7 + (int)(r.Unit() * 8);
-            float gap = 0.009f * H, span2 = 0.0065f * H, f = v.Facing;
+            float gap = 0.009f * H * ui, span2 = 0.0065f * H * ui, f = v.Facing;
             float reach = (n / 2 + 1) * gap;
             var o = new Overlay((int)(x - 1.2f * reach - span2), (int)(y - 0.6f * reach - span2),
                                 (int)(x + 1.2f * reach + span2) + 1, (int)(y + 0.6f * reach + span2) + 1);
