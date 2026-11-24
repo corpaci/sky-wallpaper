@@ -5,7 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-enum Activity { Stroll, Run, Hike, Ski, Stargaze, RainWalk, Ride }
+enum Activity { Stroll, Run, Hike, Ski, Stargaze, RainWalk, Ride, Kite, Picnic, Flowers, Garden, Snowman, Pumpkins, Skydive, FarHike }
 enum Animal { Deer, Bear, Fox, Hare, Hedgehog, RoofBirds, Swallows, Geese, Buzzard }
 
 sealed class Visit
@@ -27,13 +27,27 @@ sealed class Life
     public float Facing = 1;
     public List<Visit> Visits = new List<Visit>();
     public uint Seed;
+    public bool Snowman;     // the one they built today, standing by the porch
+    public bool Lanterns;    // their carved pumpkins by the steps, lit after dark
     public bool BikesHome { get { return Outing != Activity.Ride; } }
+    /// Whether they're up in the sky or far off on the range behind, above
+    /// the near hill's usual patch.
+    public bool Skyward { get { return Outing == Activity.Kite || Outing == Activity.Skydive || Outing == Activity.FarHike; } }
+    // Their places by the cabin, in cabin widths: the vegetable bed left of
+    // it, the snowman and the pumpkins right of the porch steps.
+    const float GardenAt = -0.95f, SnowmanAt = 1.3f, PumpkinsAt = 1.45f;
+
+    /// The outings' names for --outing, in the enum's order.
+    public static readonly string[] OutingNames = { "stroll", "run", "hike", "ski", "stargaze", "rain-walk", "ride",
+                                                    "kite", "picnic", "flowers", "garden", "snowman", "pumpkins", "skydive", "far-hike" };
 
     public Life() { }
 
     /// `day` numbers the date; `starNight` says a meteor shower peaks tonight.
     /// `extras` holds the bits of the --extra words given (see Extras).
-    public Life(int day, uint seed, int minute, SunModel sun, Season season, Sky sky, bool starNight, uint extras = 0)
+    /// `force` makes it a day for that outing, whatever the season (--outing).
+    public Life(int day, uint seed, int minute, SunModel sun, Season season, Sky sky, bool starNight, uint extras = 0,
+                Activity? force = null)
     {
         Seed = Col.Hash32(unchecked((uint)day * 0x9e3779b1 ^ seed));
         var rng = new SplitMix(unchecked(((ulong)Seed * 0x9e3779b97f4a7c15) | 1));
@@ -43,20 +57,31 @@ sealed class Life
         bool snowy = season.SnowCover > 0.3f || sky == Sky.Snow, wet = sky == Sky.Rain;
         bool evening = minute > sun.Noon;
         Func<float, float, bool> within = (a, b) => phase >= a && phase <= b;
+        Func<float, float, bool> during = (a, b) => year > a && year < b;
         Func<float> side = () => rng.Unit() < 0.5f ? -1 : 1;
+        bool later = phase > 0.7f || (phase < 0 && evening);  // after midday, through the evening
 
         // The two of them: out on about one day in four, more on a meteor
         // night (they never miss one) or a rainy day (they like walking in it).
+        // Some outings keep to their season: kites in spring and autumn wind,
+        // the garden and the meadow's flowers in spring, picnics and a tandem
+        // skydive in summer, a snowman when there's snow.
         float planRoll = rng.Unit(), kindRoll = rng.Unit(), where = rng.Unit();
         float way = side();
         Activity? plan = null;
-        if (starNight) plan = Activity.Stargaze;
+        if (force.HasValue) plan = force;
+        else if (starNight) plan = Activity.Stargaze;
         else if (wet && planRoll < 0.45f) plan = Activity.RainWalk;
         else if (planRoll < 0.25f)
         {
-            Activity[] kinds = snowy ? new[] { Activity.Ski, Activity.Stroll }
-                                     : new[] { Activity.Hike, Activity.Stroll, Activity.Run, Activity.Ride, Activity.Stargaze };
-            float[] weights = snowy ? new[] { 0.6f, 0.4f } : new[] { 0.3f, 0.3f, 0.15f, year > 0.25f && year < 0.8f ? 0.15f : 0, 0.1f };
+            Activity[] kinds = snowy ? new[] { Activity.Ski, Activity.Stroll, Activity.Snowman }
+                                     : new[] { Activity.Hike, Activity.Stroll, Activity.Run, Activity.Ride, Activity.Stargaze,
+                                               Activity.FarHike, Activity.Kite, Activity.Garden, Activity.Flowers, Activity.Picnic, Activity.Skydive };
+            float[] weights = snowy ? new[] { 0.45f, 0.25f, 0.3f }
+                                    : new[] { 0.25f, 0.3f, 0.15f, during(0.25f, 0.8f) ? 0.15f : 0, 0.1f,
+                                              during(0.3f, 0.8f) ? 0.12f : 0, during(0.18f, 0.36f) || during(0.7f, 0.84f) ? 0.25f : 0,
+                                              during(0.24f, 0.36f) ? 0.5f : 0, during(0.26f, 0.5f) ? 0.45f : 0,
+                                              during(0.36f, 0.7f) ? 0.4f : 0, during(0.42f, 0.68f) ? 0.08f : 0 };
             float k = kindRoll * weights.Aggregate(0f, (sum, w) => sum + w);
             plan = kinds[0];
             for (int i = 0; i < kinds.Length; i++)
@@ -74,11 +99,29 @@ sealed class Life
                 case Activity.Run: if (within(0.04f, 0.18f) && !snowy) { Outing = wet ? Activity.RainWalk : Activity.Run; At = way * (2.5f + 2 * where); } break;
                 case Activity.Hike: if (within(0.3f, 0.7f)) { Outing = wet ? Activity.RainWalk : Activity.Hike; At = way < 0 ? -(7 + 6 * where) : 5.5f + 2 * where; } break;
                 case Activity.Ski: if (within(0.3f, 0.7f)) { Outing = Activity.Ski; At = -(4 + 8 * where); } break;
-                case Activity.Ride: if (within(0.3f, 0.75f) && !wet) Outing = Activity.Ride; break;
+                case Activity.Ride: if (within(0.3f, 0.75f) && !wet) { Outing = Activity.Ride; At = way * (2.5f + 3.5f * where); } break;
                 case Activity.RainWalk: if (within(0.25f, 0.8f) && wet) { Outing = Activity.RainWalk; At = way * (1.5f + where); } break;
                 case Activity.Stargaze: if (alt < -12 && (minute >= 20 * 60 + 30 || minute < 60) && starry) { Outing = Activity.Stargaze; At = way * (2 + 4 * where); } break;
+                case Activity.Kite: if (within(0.3f, 0.93f)) { Outing = wet ? Activity.RainWalk : Activity.Kite; At = way * (2 + 3 * where); } break;
+                case Activity.Picnic: if (within(0.35f, 0.65f)) { Outing = wet ? Activity.RainWalk : Activity.Picnic; At = way * (1.8f + 2 * where); } break;
+                case Activity.Flowers: if (within(0.3f, 0.93f)) { Outing = wet ? Activity.RainWalk : Activity.Flowers; At = way * (1.6f + 2.4f * where); } break;
+                case Activity.Garden: if (within(0.08f, 0.6f) && !wet) { Outing = Activity.Garden; At = GardenAt; } break;
+                case Activity.Snowman:
+                    if (within(0.3f, 0.7f) && snowy) { Outing = Activity.Snowman; At = SnowmanAt; }
+                    Snowman = later && snowy;
+                    break;
+                case Activity.Skydive: if (within(0.3f, 0.7f) && starry && sky != Sky.Overcast) { Outing = Activity.Skydive; At = way * (2 + 5 * where); } break;
+                case Activity.FarHike: if (within(0.3f, 0.7f)) { Outing = wet ? Activity.RainWalk : Activity.FarHike; At = way * (3 + 8 * where); } break;
             }
         }
+        // Pumpkins: carved on the last Saturday before the end of October (by
+        // the local year), then lit by the steps every evening through the
+        // first of November. Day 1, 2000-01-01, was a Saturday.
+        int sinceSaturday = ((day - 1) % 7 + 7) % 7;
+        Func<float, bool> carvingWeek = y => y >= 0.806f && y < 0.8252f;
+        bool carvingDay = force == Activity.Pumpkins || (sinceSaturday == 0 && carvingWeek(year));
+        if (carvingDay && within(0.6f, 0.93f) && !wet) { Outing = Activity.Pumpkins; At = PumpkinsAt; }
+        Lanterns = carvingDay ? later : sinceSaturday > 0 && carvingWeek(year - sinceSaturday / 365.25f) && year < 0.8355f;
         // Extra 0. Its own stream of draws, so the visitors stay as they were.
         if ((extras & 1) != 0 && !Outing.HasValue)
         {
@@ -120,7 +163,7 @@ sealed class Life
             bool dusk = rng.Unit() < 0.5f;
             if (!(roll < chance) || !when(dusk) || Visits.Count >= 2) return;
             float x = dir * (near + (far - near) * spot);
-            if (Outing.HasValue && Outing != Activity.Ride && (x > 0) == (At > 0) && Math.Abs(x - At) < 3) x = -x;
+            if (Outing.HasValue && Outing != Activity.Skydive && Outing != Activity.FarHike && (x > 0) == (At > 0) && Math.Abs(x - At) < 3) x = -x;
             if (Visits.Any(v => Math.Abs(v.At - x) < 2.5f)) x += x > 0 ? 3 : -3;
             Visits.Add(new Visit { Kind = animal, At = x, Facing = side(), Seed = s });
         };
@@ -149,7 +192,7 @@ sealed class Life
         public uint? Skirt, Scarf, Hat, Pack;
     }
 
-    enum Pose { Walk, Run, Ski, Sit }
+    enum Pose { Walk, Run, Ski, Sit, Kneel, Ride }
 
     /// Her: mostly green and black-and-white, shoulder-length hair, glasses,
     /// flowing skirts in spring and autumn. Him: green and orange, a comfy green
@@ -191,6 +234,18 @@ sealed class Life
                 legs = new[] { new[] { hip, at(0.06f, 0.22f), at(-0.08f, 0.03f) }, new[] { hip, at(0.12f, 0.24f), at(0.1f, 0.03f) } };
                 arms = new[] { new[] { shoulder, at(-0.02f, 0.58f), at(-0.12f, 0.48f) }, new[] { shoulder, at(0.14f, 0.6f), at(0.18f, 0.5f) } };
                 break;
+            case Pose.Kneel:
+                // One knee down, reaching to the ground in front.
+                hip = at(0, 0.3f); shoulder = at(0.13f, 0.57f); head = at(0.18f, 0.68f);
+                legs = new[] { new[] { hip, at(-0.02f, 0.04f), at(-0.22f, 0.03f) }, new[] { hip, at(0.2f, 0.25f), at(0.19f, 0.02f) } };
+                arms = new[] { new[] { shoulder, at(0.2f, 0.4f), at(0.3f, 0.2f) }, new[] { shoulder, at(0.24f, 0.43f), at(0.35f, 0.22f) } };
+                break;
+            case Pose.Ride:
+                // On a bike's saddle, feet on the pedals, hands on the bars (see Things.Bike).
+                hip = at(0, 0.7f); shoulder = at(0.16f, 0.97f); head = at(0.22f, 1.09f);
+                legs = new[] { new[] { hip, at(0.13f, 0.5f), at(-0.03f, 0.33f) }, new[] { hip, at(0.21f, 0.5f), at(0.17f, 0.25f) } };
+                arms = new[] { new[] { shoulder, at(0.28f, 0.87f), at(0.39f, 0.74f) }, new[] { shoulder, at(0.3f, 0.86f), at(0.41f, 0.73f) } };
+                break;
             default:  // sitting
                 hip = at(0, 0.08f); shoulder = at(-0.08f, 0.38f); head = at(-0.09f, 0.5f);
                 legs = new[] { new[] { hip, at(0.2f, 0.2f), at(0.34f, 0.03f) }, new[] { hip, at(0.22f, 0.17f), at(0.37f, 0.02f) } };
@@ -204,6 +259,7 @@ sealed class Life
             arms[1] = new[] { shoulder, new Pt((shoulder.X + to.X) / 2 + f * 0.04f * P, (shoulder.Y + to.Y) / 2), to };
         }
         bool sitting = pose == Pose.Sit;
+        bool upright = pose == Pose.Walk || pose == Pose.Run || pose == Pose.Ski;
 
         Action<Pt[], float> leg = (j, shade) =>
         {
@@ -221,11 +277,11 @@ sealed class Life
         };
 
         // Back to front: the far arm and leg (in shadow), the pack, the body, the near ones, the head.
-        if (look.Pack.HasValue && !sitting) line(at(-0.12f, 0.74f), at(-0.13f, 0.55f), 0.17f, lit(look.Pack.Value));
+        if (look.Pack.HasValue && upright) line(at(-0.12f, 0.74f), at(-0.13f, 0.55f), 0.17f, lit(look.Pack.Value));
         arm(arms[0], 0.8f);
         leg(legs[0], 0.8f);
         line(new Pt(hip.X, hip.Y - 0.04f * P), shoulder, 0.2f, lit(look.Top));
-        if (look.Coat && !sitting)
+        if (look.Coat && upright)
         {
             Pt a = at(-0.09f, 0.76f), b = at(0.11f, 0.76f), c = at(0.15f, 0.3f), d = at(-0.15f, 0.3f);
             o.Polygon(new[] { a.X, a.Y, b.X, b.Y, c.X, c.Y, d.X, d.Y }, lit(look.Top));
@@ -235,6 +291,16 @@ sealed class Life
             if (sitting)
             {
                 Pt a = at(-0.1f, 0.18f), b = at(0.0f, 0.06f), c = at(0.28f, 0.13f), d = at(0.24f, 0.26f);
+                o.Polygon(new[] { a.X, a.Y, b.X, b.Y, c.X, c.Y, d.X, d.Y }, lit(look.Skirt.Value));
+            }
+            else if (pose == Pose.Ride)
+            {
+                Pt a = at(-0.07f, 0.82f), b = at(0.08f, 0.84f), c = at(0.24f, 0.5f), d = at(-0.04f, 0.55f);
+                o.Polygon(new[] { a.X, a.Y, b.X, b.Y, c.X, c.Y, d.X, d.Y }, lit(look.Skirt.Value));
+            }
+            else if (pose == Pose.Kneel)
+            {
+                Pt a = at(-0.07f, 0.42f), b = at(0.08f, 0.44f), c = at(0.24f, 0.2f), d = at(-0.04f, 0.08f);
                 o.Polygon(new[] { a.X, a.Y, b.X, b.Y, c.X, c.Y, d.X, d.Y }, lit(look.Skirt.Value));
             }
             else
@@ -254,7 +320,7 @@ sealed class Life
             line(at(-0.06f, 0.8f), at(0.09f, 0.81f), 0.07f, lit(look.Scarf.Value));
             line(at(-0.04f, 0.8f), at(-0.08f, 0.64f), 0.05f, lit(look.Scarf.Value));
         }
-        if (look.Pack.HasValue && !sitting) line(at(0.0f, 0.77f), at(0.05f, 0.58f), 0.025f, lit(0x222226));  // its strap
+        if (look.Pack.HasValue && upright) line(at(0.0f, 0.77f), at(0.05f, 0.58f), 0.025f, lit(0x222226));  // its strap
         arm(arms[1], 1);
 
         float hx = head.X, hy = head.Y;
@@ -392,6 +458,153 @@ sealed class Life
         o.Circle(x + f * 0.12f * s, y - 0.025f * s, 0.009f * s, spines * 0.3f);
     }
 
+    /// A pumpkin on the ground at (x, y), `r` its half-height: a carved one
+    /// shows its face, lit from inside by `glow`.
+    static void Pumpkin(Overlay o, float x, float y, float r, bool carved, float glow, Func<uint, RGB> lit)
+    {
+        float cy = y - 0.8f * r;
+        o.Ellipse(x, cy, 1.2f * r, 0.82f * r, 0, lit(0xd0601c));
+        o.Ellipse(x, cy, 0.75f * r, 0.8f * r, 0, lit(0xe8792b));  // its ribs
+        o.Ellipse(x, cy, 0.3f * r, 0.78f * r, 0, lit(0xf08c3c));
+        o.Line(x, cy - 0.7f * r, x + 0.12f * r, cy - 1.05f * r, 0.2f * r, lit(0x4a6a2a));  // the stem
+        if (!carved) return;
+        RGB face = lit(0x2a1408) + RGB.Hex(0xffa030) * (1.3f * glow);
+        foreach (float s in new[] { -1f, 1f })
+            o.Polygon(new[] { x + s * 0.5f * r, cy - 0.1f * r, x + s * 0.18f * r, cy - 0.1f * r, x + s * 0.34f * r, cy - 0.42f * r }, face);
+        o.Polygon(new[] { x - 0.62f * r, cy + 0.16f * r, x + 0.62f * r, cy + 0.16f * r, x + 0.36f * r, cy + 0.5f * r, x - 0.36f * r, cy + 0.5f * r }, face);
+        if (glow > 0) o.Glow(x, cy, 1.8f * r, RGB.Hex(0xff8a2a) * (0.12f * glow));
+    }
+
+    /// A snowman, facing `f`: two balls, stick arms, and when `done` its head,
+    /// a carrot nose, coal eyes, a hat and his green scarf.
+    static void SnowmanFigure(Overlay o, float x, float y, float P, float f, bool done, RGB snow, Func<uint, RGB> lit)
+    {
+        RGB coal = lit(0x1c1c22), stick = lit(0x5a3c26);
+        foreach (float s in new[] { -1f, 1f })
+        {
+            o.Line(x + s * 0.1f * P, y - 0.5f * P, x + s * 0.32f * P, y - 0.66f * P, 0.025f * P, stick);
+            o.Line(x + s * 0.25f * P, y - 0.61f * P, x + s * 0.29f * P, y - 0.73f * P, 0.018f * P, stick);
+        }
+        o.Circle(x, y - 0.19f * P, 0.21f * P, snow * 0.92f);
+        o.Circle(x + f * 0.01f * P, y - 0.48f * P, 0.15f * P, snow * 0.96f);
+        foreach (float up in new[] { 0.42f, 0.52f }) o.Circle(x + f * 0.11f * P, y - up * P, 0.018f * P, coal);
+        if (!done) return;
+        float hx = x + f * 0.015f * P, hy = y - 0.7f * P;
+        o.Circle(hx, hy, 0.105f * P, snow);
+        o.Line(x - 0.12f * P, y - 0.6f * P, x + 0.12f * P, y - 0.61f * P, 0.05f * P, lit(0x4f9a52));
+        o.Line(x - f * 0.06f * P, y - 0.6f * P, x - f * 0.1f * P, y - 0.46f * P, 0.04f * P, lit(0x4f9a52));
+        o.Polygon(new[] { hx + f * 0.06f * P, hy - 0.02f * P, hx + f * 0.24f * P, hy + 0.01f * P, hx + f * 0.06f * P, hy + 0.025f * P }, lit(0xf08a2c));
+        o.Circle(hx + f * 0.04f * P, hy - 0.04f * P, 0.016f * P, coal);
+        o.Circle(hx + f * 0.085f * P, hy - 0.035f * P, 0.014f * P, coal);
+        o.Polygon(new[] { hx - 0.07f * P, hy - 0.08f * P, hx + 0.07f * P, hy - 0.08f * P, hx + 0.06f * P, hy - 0.21f * P, hx - 0.06f * P, hy - 0.21f * P }, lit(0x2a2a30));
+        o.Line(hx - 0.11f * P, hy - 0.08f * P, hx + 0.11f * P, hy - 0.08f * P, 0.025f * P, lit(0x2a2a30));
+    }
+
+    /// A diamond kite at (kx, ky), panels every color, on a sagging line from
+    /// the hand at (hx, hy); its tail streams on downwind (toward `f`) with bows.
+    static void Kite(Overlay o, float hx, float hy, float kx, float ky, float P, float f, Func<uint, RGB> lit)
+    {
+        float thin = Math.Max(0.012f * P, 0.6f);
+        Pt last = new Pt(hx, hy);
+        for (int i = 1; i <= 16; i++)
+        {
+            float t = i / 16f;
+            var p = new Pt(hx + (kx - hx) * t, hy + (ky - hy) * t + 1.2f * P * t * (1 - t));
+            o.Line(last.X, last.Y, p.X, p.Y, thin, lit(0xe8e4da));
+            last = p;
+        }
+        float c = (float)Math.Cos(f * 0.35f), s = (float)Math.Sin(f * 0.35f);
+        Func<float, float, Pt> at = (u, v) => new Pt(kx + (u * c - v * s) * P, ky + (u * s + v * c) * P);
+        Pt top = at(0, -0.38f), right = at(0.28f, -0.1f), bottom = at(0, 0.5f), left = at(-0.28f, -0.1f), mid = at(0, -0.1f);
+        Pt[][] panels = { new[] { top, right }, new[] { right, bottom }, new[] { bottom, left }, new[] { left, top } };
+        uint[] colors = { 0xd8433a, 0xf2c94c, 0x3f7fd0, 0x5aa65a };
+        for (int k = 0; k < 4; k++)
+            o.Polygon(new[] { mid.X, mid.Y, panels[k][0].X, panels[k][0].Y, panels[k][1].X, panels[k][1].Y }, lit(colors[k]));
+        o.Line(top.X, top.Y, bottom.X, bottom.Y, 0.02f * P, lit(0x3a2e26));
+        o.Line(left.X, left.Y, right.X, right.Y, 0.02f * P, lit(0x3a2e26));
+        last = bottom;
+        for (int i = 1; i <= 10; i++)
+        {
+            var p = new Pt(bottom.X + f * 0.11f * P * i, bottom.Y + 0.12f * P * i + 0.05f * P * (float)Math.Sin(i * 1.3f));
+            o.Line(last.X, last.Y, p.X, p.Y, thin, lit(0xf2f2ee));
+            if (i % 3 == 0)
+            {
+                RGB bow = lit(i == 6 ? 0xf2c94cu : 0xd8433au);
+                o.Polygon(new[] { p.X, p.Y, p.X - 0.06f * P, p.Y - 0.04f * P, p.X - 0.06f * P, p.Y + 0.04f * P }, bow);
+                o.Polygon(new[] { p.X, p.Y, p.X + 0.06f * P, p.Y - 0.04f * P, p.X + 0.06f * P, p.Y + 0.04f * P }, bow);
+            }
+            last = p;
+        }
+    }
+
+    /// Their vegetable bed, standing on the ground at (x, y): bare through
+    /// winter (or under snow), sprouting in spring, lettuce and tomatoes on
+    /// stakes through summer, pumpkins swelling until they're taken to carve.
+    static void Garden(Overlay o, float x, float y, float P, float year, RGB? snow, Func<uint, RGB> lit)
+    {
+        float half = 0.5f * P, top = y - 0.13f * P;
+        o.Polygon(new[] { x - half, top, x + half, top, x + half, y, x - half, y }, lit(0x7a5434));
+        o.Line(x - half, top, x + half, top, 0.05f * P, lit(0x3a2a1e));
+        foreach (float s in new[] { -1f, 1f }) o.Line(x + s * half, top - 0.03f * P, x + s * half, y, 0.05f * P, lit(0x5a3c26));
+        if (snow.HasValue)
+        {
+            o.Ellipse(x, top - 0.01f * P, 1.05f * half, 0.06f * P, 0, snow.Value);
+            return;
+        }
+        float grow = Col.Smoothstep(0.27f, 0.48f, year);
+        if (!(grow > 0 && year < 0.86f)) return;
+        RGB leaf = Col.Mix(lit(0x4f8a3a), lit(0x9a8a4a), Col.Smoothstep(0.74f, 0.82f, year));  // yellowing in autumn
+        for (int k = 0; k < 6; k++)
+        {
+            float px = x - half + (k + 0.5f) / 3 * half;
+            if (k % 2 == 0)
+            {
+                o.Ellipse(px, top - 0.04f * P * grow, (0.03f + 0.05f * grow) * P, (0.02f + 0.045f * grow) * P, 0, leaf);
+            }
+            else
+            {
+                float h = (0.06f + 0.4f * grow) * P;
+                if (year > 0.33f) o.Line(px + 0.03f * P, top, px + 0.03f * P, top - 0.5f * P, 0.02f * P, lit(0x8a6a44));
+                o.Line(px, top, px, top - h, (0.02f + 0.05f * grow) * P, leaf);
+                o.Ellipse(px - 0.03f * P, top - 0.55f * h, 0.05f * P * grow + 0.01f * P, 0.03f * P, 0.5f, leaf);
+                o.Ellipse(px + 0.04f * P, top - 0.8f * h, 0.05f * P * grow + 0.01f * P, 0.03f * P, -0.5f, leaf);
+                if (year > 0.55f && year < 0.76f)
+                {
+                    float[][] fruit = { new[] { -0.04f, 0.4f }, new[] { 0.045f, 0.6f }, new[] { -0.03f, 0.78f } };
+                    foreach (float[] t in fruit) o.Circle(px + t[0] * P, top - t[1] * h, 0.028f * P, lit(0xd8302a));
+                }
+            }
+        }
+        if (year > 0.58f && year < 0.81f)
+        {
+            float[][] vines = { new[] { -0.5f, 1f }, new[] { 0.45f, -1f } };
+            foreach (float[] v in vines)
+            {
+                o.Line(x + v[0] * half, top - 0.01f * P, x + (v[0] + v[1] * 0.35f) * half, top - 0.02f * P, 0.02f * P, leaf);
+                Pumpkin(o, x + v[0] * half, top + 0.01f * P, (0.04f + 0.07f * Col.Smoothstep(0.58f, 0.7f, year)) * P, false, 0, lit);
+            }
+        }
+    }
+
+    /// A bunch of flowers held at (hx, hy), wrapped in white paper.
+    static void Bouquet(Overlay o, float hx, float hy, float P, float f, Func<uint, RGB> lit)
+    {
+        float[][] heads = { new[] { -0.06f, 0.2f }, new[] { 0.0f, 0.25f }, new[] { 0.06f, 0.21f },
+                            new[] { -0.03f, 0.29f }, new[] { 0.04f, 0.3f }, new[] { 0.09f, 0.26f } };
+        uint[] colors = { 0xf7d23e, 0xfbfbf7, 0xd8a7e8, 0xe63b2e, 0x4a6fe0, 0xf7d23e };
+        foreach (float[] h in heads) o.Line(hx, hy, hx + f * h[0] * P, hy - h[1] * P, 0.012f * P, lit(0x4f8a3a));
+        for (int k = 0; k < heads.Length; k++) o.Circle(hx + f * heads[k][0] * P, hy - heads[k][1] * P, 0.035f * P, lit(colors[k]));
+        o.Polygon(new[] { hx - 0.05f * P, hy - 0.12f * P, hx + 0.07f * P, hy - 0.12f * P, hx + f * 0.01f * P, hy + 0.05f * P }, lit(0xf2efe6));
+    }
+
+    /// A wine glass with red in it, its stem held at (x, y).
+    static void Glass(Overlay o, float x, float y, float P, Func<uint, RGB> lit)
+    {
+        o.Line(x, y - 0.02f * P, x, y + 0.04f * P, 0.012f * P, lit(0xdfe6ea));
+        o.Polygon(new[] { x - 0.035f * P, y - 0.09f * P, x + 0.035f * P, y - 0.09f * P, x + 0.02f * P, y - 0.02f * P, x - 0.02f * P, y - 0.02f * P }, lit(0x8a1a2a));
+        o.Line(x - 0.038f * P, y - 0.11f * P, x + 0.038f * P, y - 0.11f * P, 0.015f * P, lit(0xdfe6ea));
+    }
+
     /// A bird on the wing, seen from the side or below: two wings bent at the
     /// wrist, `flap` lifting their tips.
     static void FlyingBird(Overlay o, float x, float y, float span, float flap, float broad, RGB color)
@@ -403,16 +616,39 @@ sealed class Life
         o.Ellipse(x, y + 0.03f * span, 0.06f * span, 0.04f * span, 0, color);
     }
 
-    /// Paints the two and their visitors onto the near hill's patch. `ground`
-    /// gives the hill's top at x; `clearing` the nearest x near another where
-    /// no tree stands on the ridge, for a figure that should show against the
-    /// sky, or NaN when there's none near.
+    /// Paints the two, their garden and their things, and their visitors
+    /// onto the near hill's patch. `ground` gives the hill's top at x;
+    /// `clearing` the nearest x near another where no tree stands on the
+    /// ridge, for a figure that should show against the sky, or NaN when
+    /// there's none near. `snow` is snow's color on things. `distant`
+    /// finds a spot {x, y} on the range behind, near x, where a figure that
+    /// tall shows against the sky, or null; `distantLit` gives a color as it
+    /// looks there.
     public void Draw(Overlay o, Cabin cabin, float H, float width, float year, bool snowy,
-                     Func<float, float> ground, Func<float, float, float> clearing, Func<uint, RGB> lit, float lamp)
+                     Func<float, float> ground, Func<float, float, float> clearing, Func<uint, RGB> lit, RGB snow, float lamp,
+                     Func<float, float, float[]> distant, Func<uint, RGB> distantLit)
     {
         float P = 0.7f * cabin.WallH, unit = 2 * cabin.HalfWidth;
         Func<float, float> place = a => Math.Min(Math.Max(cabin.X + a * unit, 0.04f * width), 0.96f * width);
         var rng = new SplitMix(unchecked(((ulong)Seed * 0x2545f4914f6cdd1d) | 1));
+
+        // Their things: the vegetable bed, a snowman, the pumpkins lit by the steps.
+        float gx = place(GardenAt);
+        Garden(o, gx, ground(gx) + 0.006f * H, P, year, snowy ? snow : (RGB?)null, lit);
+        if (Snowman)
+        {
+            float sx = place(SnowmanAt);
+            SnowmanFigure(o, sx, ground(sx) + 0.008f * H, P, 1, true, snow, lit);
+        }
+        if (Lanterns)
+        {
+            float[][] spots = { new[] { 0.6f, 0.13f }, new[] { 0.85f, 0.1f }, new[] { 1.12f, 0.15f } };
+            foreach (float[] l in spots)
+            {
+                float lx = cabin.Porch1 + l[0] * cabin.HalfWidth;
+                Pumpkin(o, lx, ground(lx) + 0.006f * H, l[1] * P, true, lamp, lit);
+            }
+        }
 
         foreach (Visit v in Visits)
         {
@@ -484,7 +720,7 @@ sealed class Life
             }
         }
 
-        if (!Outing.HasValue || Outing == Activity.Ride) return;
+        if (!Outing.HasValue) return;
         Activity outing = Outing.Value;
         bool far = Math.Abs(At) > 5;
         Look[] looks = Looks(year, snowy, far);
@@ -557,6 +793,169 @@ sealed class Life
                 float lampX = x + fc * (0.15f - 0.09f * 1.05f) * P, lampY = y - 0.5f * 1.05f * P;
                 o.Glow(lampX, lampY, 0.025f * P, new RGB(0.6f, 0.04f, 0.01f));
                 o.Glow(lampX, lampY, 0.12f * P, new RGB(0.04f, 0.003f, 0.001f));
+                break;
+            }
+            case Activity.Ride:
+            {
+                // Along the ridge, one behind the other: hers green, his orange.
+                float x = place(At), y = ground(x) + 0.01f * H;
+                float[] dxs = { -0.75f, 0.65f }, scales = { 1, 1.05f };
+                uint[] colors = { 0x3f9a4a, 0xe8792b };
+                Look[] who = { her, him };
+                for (int k = 0; k < 2; k++)
+                {
+                    float sP = P * scales[k], r = sP / 3.5f, px = x + fc * dxs[k] * P;
+                    Things.Bike(o, px - fc * 0.95f * r, y - r, r, fc, colors[k], lit);
+                    Person(o, px, y, sP, fc, Pose.Ride, 0, false, who[k], lit);
+                }
+                break;
+            }
+            case Activity.Kite:
+            {
+                // On the meadow: he holds the line, she points it out.
+                float x = place(At), y = ground(x) + 0.008f * H;
+                var hand = new Pt(x + fc * 0.42f * P, y - 0.98f * P);
+                Person(o, x - fc * 0.3f * P, y - 0.002f * H, P, fc, Pose.Walk, 0.2f, false, her, lit, new Pt(x - fc * 0.12f * P, y - 1.0f * P));
+                Person(o, x + fc * 0.22f * P, y, P * 1.05f, fc, Pose.Walk, -0.2f, false, him, lit, hand);
+                Kite(o, hand.X, hand.Y, x + fc * 3.4f * P, y - 6.4f * P, P, fc, lit);
+                break;
+            }
+            case Activity.Picnic:
+            {
+                // On a checked blanket on the ridge, facing each other: bread,
+                // apples, a basket and a bottle of red between them, a glass each.
+                float gap = clearing(place(At), 1.3f * P);
+                float x = float.IsNaN(gap) ? place(At) : gap, y = ground(x) + (float.IsNaN(gap) ? 0.01f : 0.002f) * H;
+                for (int i = 0; i < 14; i++)
+                {
+                    for (int row = 0; row < 2; row++)
+                    {
+                        float xa = x - 1.05f * P + 0.15f * P * i, xb = x - 0.9f * P + 0.15f * P * i;
+                        float ya = y - 0.06f * P + 0.03f * P * row, yb = y - 0.03f * P + 0.03f * P * row;
+                        o.Polygon(new[] { xa, ya, xb, ya, xb, yb, xa, yb }, lit((i + row) % 2 == 0 ? 0xd8433au : 0xf2efe6u));
+                    }
+                }
+                float bx = x - fc * 0.22f * P;
+                o.Polygon(new[] { bx - 0.11f * P, y - 0.2f * P, bx + 0.11f * P, y - 0.2f * P, bx + 0.09f * P, y - 0.05f * P, bx - 0.09f * P, y - 0.05f * P }, lit(0x9a6a3a));
+                o.Line(bx - 0.1f * P, y - 0.13f * P, bx + 0.1f * P, y - 0.13f * P, 0.015f * P, lit(0x7a5030));
+                for (int i = 0; i < 8; i++)  // its handle
+                {
+                    float a0 = i * (float)Math.PI / 8, a1 = (i + 1) * (float)Math.PI / 8;
+                    o.Line(bx + 0.09f * P * (float)Math.Cos(a0), y - 0.2f * P - 0.1f * P * (float)Math.Sin(a0),
+                           bx + 0.09f * P * (float)Math.Cos(a1), y - 0.2f * P - 0.1f * P * (float)Math.Sin(a1), 0.018f * P, lit(0x7a5030));
+                }
+                float wx = x + fc * 0.03f * P;
+                o.Line(wx, y - 0.07f * P, wx, y - 0.21f * P, 0.07f * P, lit(0x1f4a2a));
+                o.Line(wx, y - 0.21f * P, wx, y - 0.33f * P, 0.03f * P, lit(0x1f4a2a));
+                o.Line(wx, y - 0.11f * P, wx, y - 0.16f * P, 0.072f * P, lit(0xf2efe6));  // its label
+                o.Ellipse(x + fc * 0.22f * P, y - 0.09f * P, 0.11f * P, 0.035f * P, -fc * 0.25f, lit(0xd8a05a));  // a loaf
+                foreach (float dx in new[] { 0.38f, 0.45f }) o.Circle(x + fc * dx * P, y - 0.1f * P, 0.038f * P, lit(0xc8302a));
+                Pt herGlass = new Pt(x - fc * 0.47f * P, y - 0.48f * P), hisGlass = new Pt(x + fc * 0.48f * P, y - 0.5f * P);
+                Person(o, x - fc * 0.78f * P, y, P, fc, Pose.Sit, 0, false, her, lit, herGlass);
+                Person(o, x + fc * 0.8f * P, y, P * 1.05f, -fc, Pose.Sit, 0, false, him, lit, hisGlass);
+                Glass(o, herGlass.X, herGlass.Y, P, lit);
+                Glass(o, hisGlass.X, hisGlass.Y, P, lit);
+                break;
+            }
+            case Activity.Flowers:
+            {
+                // On the meadow: he kneels for one more, she carries the bouquet.
+                float x = place(At), y = ground(x) + 0.008f * H;
+                var hand = new Pt(x - fc * 0.1f * P, y - 0.56f * P);
+                float[] dxs = { 0.62f, 0.95f, 1.1f, 1.25f };
+                uint[] colors = { 0xd8a7e8, 0xfbfbf7, 0xe63b2e, 0xf7d23e };
+                for (int k = 0; k < 4; k++)
+                {
+                    o.Line(x + fc * dxs[k] * P, y, x + fc * dxs[k] * P, y - 0.12f * P, 0.012f * P, lit(0x4f8a3a));
+                    o.Circle(x + fc * dxs[k] * P, y - 0.12f * P, 0.03f * P, lit(colors[k]));
+                }
+                Person(o, x + fc * 0.42f * P, y, P * 1.05f, fc, Pose.Kneel, 0, false, him, lit);
+                var pick = new Pt(x + fc * (0.42f + 0.35f * 1.05f) * P, y - 0.22f * 1.05f * P);
+                o.Line(pick.X, pick.Y, pick.X + fc * 0.02f * P, pick.Y - 0.1f * P, 0.012f * P, lit(0x4f8a3a));
+                o.Circle(pick.X + fc * 0.02f * P, pick.Y - 0.1f * P, 0.03f * P, lit(0xf7d23e));
+                Person(o, x - fc * 0.3f * P, y - 0.002f * H, P, fc, Pose.Walk, s0, false, her, lit, hand);
+                Bouquet(o, hand.X, hand.Y, P, fc, lit);
+                break;
+            }
+            case Activity.Garden:
+            {
+                // Planting the bed: she kneels with a seedling, he waters from the green can.
+                float x = place(At), y = ground(x) + 0.008f * H;
+                Person(o, x - fc * 0.55f * P, y, P, fc, Pose.Kneel, 0, false, her, lit);
+                var sprout = new Pt(x - fc * (0.55f - 0.35f) * P, y - 0.22f * P);
+                o.Ellipse(sprout.X - 0.02f * P, sprout.Y - 0.04f * P, 0.03f * P, 0.015f * P, 0.6f, lit(0x5aa65a));
+                o.Ellipse(sprout.X + 0.02f * P, sprout.Y - 0.04f * P, 0.03f * P, 0.015f * P, -0.6f, lit(0x5aa65a));
+                var hand = new Pt(x + fc * 0.64f * P, y - 0.55f * P);
+                Person(o, x + fc * 0.86f * P, y, P * 1.05f, -fc, Pose.Walk, 0.15f, false, him, lit, hand);
+                float cx = hand.X - fc * 0.06f * P, cy = hand.Y + 0.08f * P;
+                o.Line(cx + fc * 0.02f * P, cy - 0.04f * P, cx - fc * 0.24f * P, cy - 0.1f * P, 0.025f * P, lit(0x3f8a52));  // the spout
+                o.Polygon(new[] { cx - 0.08f * P, cy - 0.06f * P, cx + 0.08f * P, cy - 0.06f * P, cx + 0.07f * P, cy + 0.06f * P, cx - 0.07f * P, cy + 0.06f * P },
+                          lit(0x3f8a52));
+                o.Line(cx - fc * 0.02f * P, cy - 0.06f * P, hand.X, hand.Y, 0.02f * P, lit(0x2f6a3a));  // the handle
+                for (int i = 1; i <= 4; i++)
+                {
+                    float t = i;
+                    o.Circle(cx - fc * (0.25f + 0.015f * t) * P, cy - 0.08f * P + 0.045f * P * t, 0.012f * P, lit(0xa8d0f0));
+                }
+                break;
+            }
+            case Activity.Snowman:
+            {
+                // Building it: she sets its head on, he rolls one more ball.
+                float x = place(At), y = ground(x) + 0.008f * H, ball = x + 0.98f * P;
+                SnowmanFigure(o, x, y, P, 1, false, snow, lit);
+                Person(o, x - 0.42f * P, y - 0.002f * H, P, 1, Pose.Walk, 0.3f, false, her, lit, new Pt(x - 0.1f * P, y - 0.72f * P));
+                o.Circle(x - 0.02f * P, y - 0.72f * P, 0.105f * P, snow);
+                o.Circle(ball, y - 0.15f * P, 0.15f * P, snow * 0.92f);
+                Person(o, x + 1.32f * P, y, P * 1.05f, -1, Pose.Run, 0, false, him, lit, new Pt(ball + 0.12f * P, y - 0.22f * P));
+                break;
+            }
+            case Activity.Pumpkins:
+            {
+                // Carving them on the grass by the porch.
+                float x = place(At), y = ground(x) + 0.008f * H;
+                Pumpkin(o, x - 0.12f * P, y, 0.13f * P, true, 0, lit);
+                Pumpkin(o, x + 0.17f * P, y, 0.1f * P, false, 0, lit);
+                Person(o, x - 0.55f * P, y - 0.002f * H, P, 1, Pose.Kneel, 0, false, her, lit);
+                Person(o, x + 0.6f * P, y, P * 1.05f, -1, Pose.Kneel, 0, false, him, lit);
+                var hand = new Pt(x + (0.6f - 0.35f * 1.05f) * P, y - 0.22f * 1.05f * P);
+                o.Line(hand.X, hand.Y, hand.X - 0.08f * P, hand.Y - 0.03f * P, 0.02f * P, lit(0xc8c8c8));  // his knife
+                break;
+            }
+            case Activity.Skydive:
+            {
+                // A tandem jump, coming down over the hill under a canopy in
+                // their colors: him behind, her in front, legs up for landing.
+                float x = place(At), hy = ground(x) - 8 * P;
+                float cx = x + fc * 0.15f * P, R = 1.5f * P, cy = hy - 2.4f * P + R;
+                Func<float, float, Pt> edge = (a, r) => new Pt(cx + r * (float)Math.Sin(a), cy - r * (float)Math.Cos(a));
+                foreach (float a in new[] { -0.8f, -0.4f, 0, 0.4f, 0.8f })
+                {
+                    Pt e = edge(a, R - 0.3f * P);
+                    o.Line(e.X, e.Y, x, hy - 0.6f * P, Math.Max(0.01f * P, 0.5f), lit(0x4a4a50));
+                }
+                uint[] cells = { 0xe8792b, 0xf2f2ee, 0x3f8a52 };
+                for (int i = 0; i < 7; i++)
+                {
+                    float a0 = -0.8f + 1.6f * i / 7, a1 = -0.8f + 1.6f * (i + 1) / 7;
+                    Pt p0 = edge(a0, R), p1 = edge(a1, R), p2 = edge(a1, R - 0.3f * P), p3 = edge(a0, R - 0.3f * P);
+                    o.Polygon(new[] { p0.X, p0.Y, p1.X, p1.Y, p2.X, p2.Y, p3.X, p3.Y }, lit(cells[i % 3]));
+                }
+                Person(o, x - fc * 0.08f * P, hy - 0.1f * P, P * 1.05f, fc, Pose.Sit, 0, false, him, lit);
+                Person(o, x + fc * 0.08f * P, hy, P, fc, Pose.Sit, 0, true, her, lit);
+                break;
+            }
+            case Activity.FarHike:
+            {
+                // Two specks with packs on the range behind, up on its crest.
+                float tiny = 0.2f * P;
+                float[] spot = distant(place(At), 1.2f * tiny);
+                if (spot != null)
+                {
+                    Look[] packed = Looks(year, snowy, true);
+                    Person(o, spot[0] - fc * 0.3f * tiny, spot[1] + 0.03f * tiny, tiny, fc, Pose.Walk, s0, false, packed[0], distantLit);
+                    Person(o, spot[0] + fc * 0.3f * tiny, spot[1] + 0.03f * tiny, tiny * 1.05f, fc, Pose.Walk, -s0, false, packed[1], distantLit);
+                }
                 break;
             }
         }

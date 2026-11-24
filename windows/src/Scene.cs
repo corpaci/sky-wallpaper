@@ -1068,11 +1068,13 @@ sealed class Scene
         float frostGlint = season.Frost * Col.Smoothstep(-2, 4, alt) * 0.7f;
 
         // Small things in front of the near hill: flowers in their season,
-        // fireflies on warm midsummer nights.
+        // fireflies on warm midsummer nights. A kite, a parachute or the two
+        // far off on the range behind need more of the sky.
         int near = Layers.Length - 1;
         float nearTop = float.MaxValue;
         for (int x = 0; x < width; x++) nearTop = Math.Min(nearTop, ground[near * width + x]);
-        var nearOverlay = new Overlay(0, Math.Max((int)(nearTop - 0.16f * H * ui), 0), width, Height);
+        float headroom = life.Skyward ? 0.35f : 0.16f;
+        var nearOverlay = new Overlay(0, Math.Max((int)(nearTop - headroom * H * ui), 0), width, Height);
         float bloom = season.Flowers * (1 - groundSnow);
         if (bloom > 0 && daylight > 0)
         {
@@ -1119,7 +1121,36 @@ sealed class Scene
             }
             return float.NaN;  // none: they stay on the meadow
         };
-        life.Draw(nearOverlay, cabin, H * ui, W, season.Year, groundSnow > 0.3f, ridge, clearing, litNear, windowLight);
+        float overlayTop = nearOverlay.Y0;
+        Func<float, float, float[]> distant = (x0, tall) =>
+        {
+            // The highest point of the rocky range's crest within a tenth of
+            // the width, where nothing nearer (land, cabin, trees) rises in
+            // front of a figure that tall.
+            float[] best = null;
+            int pad = Math.Max((int)(0.6f * tall), 1);
+            int lo = Math.Max((int)(x0 - 0.1f * W), pad), hi = Math.Max(Math.Min((int)(x0 + 0.1f * W), width - pad), lo);
+            for (int x = lo; x < hi; x++)
+            {
+                float y = ground[width + x];
+                if (!((best == null || y < best[1]) && y - tall > overlayTop)) continue;
+                bool open = true;
+                for (int cx = x - pad; cx <= x + pad && open; cx++)
+                {
+                    for (int l = 2; l < Layers.Length && open; l++)
+                    {
+                        for (int s = 0; s < Sub; s++)
+                            if (top[(l * width + cx) * Sub + s] < y + 1) { open = false; break; }
+                        for (int ty = Math.Max((int)(y - tall), 0); ty <= Math.Max((int)y, 0) && open; ty++)
+                            if (trees[(l * Height + ty) * width + cx] > 20 || leaves[((l - 2) * Height + ty) * width + cx] > 20) open = false;
+                    }
+                }
+                if (open) best = new[] { x + 0.5f, y };
+            }
+            return best;
+        };
+        Func<uint, RGB> litFar = hex => inLayer(RGB.Hex(hex), 1);
+        life.Draw(nearOverlay, cabin, H * ui, W, season.Year, groundSnow > 0.3f, ridge, clearing, litNear, snowOnTop, windowLight, distant, litFar);
         Overlay skyBirds = life.DrawSky(W, H, ui, Col.MixOklab(pal.Land * 0.7f, pal.Mid, 0.3f));
         // Fallen leaves on the ground around the leafy trees, gathering as
         // the trees let them go, browning through winter, until snow covers

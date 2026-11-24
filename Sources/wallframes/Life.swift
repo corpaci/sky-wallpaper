@@ -5,7 +5,10 @@ import Foundation
 /// so all its frames tell one story; the minute, the light, the season and
 /// the weather decide what of it shows.
 struct Life {
-    enum Outing: Equatable { case stroll, run, hike, ski, stargaze, rainWalk, ride }
+    enum Outing: String, CaseIterable {
+        case stroll, run, hike, ski, stargaze, rainWalk = "rain-walk", ride
+        case kite, picnic, flowers, garden, snowman, pumpkins, skydive, farHike = "far-hike"
+    }
     enum Animal: Equatable { case deer, bear, fox, hare, hedgehog, roofBirds, swallows, geese, buzzard }
     struct Visit {
         let animal: Animal
@@ -19,34 +22,54 @@ struct Life {
     var facing: Float = 1
     var visits: [Visit] = []
     var seed: UInt32 = 0
+    var snowman = false    // the one they built today, standing by the porch
+    var lanterns = false   // their carved pumpkins by the steps, lit after dark
     var bikesHome: Bool { outing != .ride }
+    /// Whether they're up in the sky or far off on the range behind, above
+    /// the near hill's usual patch.
+    var skyward: Bool { outing == .kite || outing == .skydive || outing == .farHike }
+    // Their places by the cabin, in cabin widths: the vegetable bed left of
+    // it, the snowman and the pumpkins right of the porch steps.
+    static let gardenAt: Float = -0.95, snowmanAt: Float = 1.3, pumpkinsAt: Float = 1.45
 
     init() {}
 
     /// `day` numbers the date; `starNight` says a meteor shower peaks tonight.
     /// `extras` holds the bits of the --extra words given (see Extras).
-    init(day: Int, seed: UInt32, minute: Int, sun: SunModel, season: Season, sky: Sky, starNight: Bool, extras: UInt32 = 0) {
+    /// `force` makes it a day for that outing, whatever the season (--outing).
+    init(day: Int, seed: UInt32, minute: Int, sun: SunModel, season: Season, sky: Sky, starNight: Bool, extras: UInt32 = 0,
+         force: Outing? = nil) {
         self.seed = hash32(UInt32(truncatingIfNeeded: day) &* 0x9e3779b1 ^ seed)
         var rng = SplitMix(state: UInt64(self.seed) &* 0x9e3779b97f4a7c15 | 1)
         let alt = sun.altitude(minute), phase = sun.dayPhase(minute) ?? -1, year = season.year
         let snowy = season.snowCover > 0.3 || sky == .snow, wet = sky == .rain
         let evening = minute > sun.noon
         func within(_ a: Float, _ b: Float) -> Bool { phase >= a && phase <= b }
+        func during(_ a: Float, _ b: Float) -> Bool { year > a && year < b }
         func side() -> Float { rng.unit() < 0.5 ? -1 : 1 }
+        let later = phase > 0.7 || (phase < 0 && evening)  // after midday, through the evening
 
         // The two of them: out on about one day in four, more on a meteor
         // night (they never miss one) or a rainy day (they like walking in it).
+        // Some outings keep to their season: kites in spring and autumn wind,
+        // the garden and the meadow's flowers in spring, picnics and a tandem
+        // skydive in summer, a snowman when there's snow.
         let planRoll = rng.unit(), kindRoll = rng.unit(), where_ = rng.unit()
         let way = side()
         var plan: Outing?
-        if starNight {
+        if let force {
+            plan = force
+        } else if starNight {
             plan = .stargaze
         } else if wet && planRoll < 0.45 {
             plan = .rainWalk
         } else if planRoll < 0.25 {
             let choices: [(Outing, Float)] = snowy
-                ? [(.ski, 0.6), (.stroll, 0.4)]
-                : [(.hike, 0.3), (.stroll, 0.3), (.run, 0.15), (.ride, year > 0.25 && year < 0.8 ? 0.15 : 0), (.stargaze, 0.1)]
+                ? [(.ski, 0.45), (.stroll, 0.25), (.snowman, 0.3)]
+                : [(.hike, 0.25), (.stroll, 0.3), (.run, 0.15), (.ride, during(0.25, 0.8) ? 0.15 : 0), (.stargaze, 0.1),
+                   (.farHike, during(0.3, 0.8) ? 0.12 : 0), (.kite, during(0.18, 0.36) || during(0.7, 0.84) ? 0.25 : 0),
+                   (.garden, during(0.24, 0.36) ? 0.5 : 0), (.flowers, during(0.26, 0.5) ? 0.45 : 0),
+                   (.picnic, during(0.36, 0.7) ? 0.4 : 0), (.skydive, during(0.42, 0.68) ? 0.08 : 0)]
             var k = kindRoll * choices.reduce(0) { $0 + $1.1 }
             plan = choices.first { k -= $0.1; return k < 0 }?.0 ?? choices[0].0
         }
@@ -56,11 +79,28 @@ struct Life {
         case .run?: if within(0.04, 0.18) && !snowy { outing = wet ? .rainWalk : .run; at = way * (2.5 + 2 * where_) }
         case .hike?: if within(0.3, 0.7) { outing = wet ? .rainWalk : .hike; at = way < 0 ? -(7 + 6 * where_) : 5.5 + 2 * where_ }
         case .ski?: if within(0.3, 0.7) { outing = .ski; at = -(4 + 8 * where_) }
-        case .ride?: if within(0.3, 0.75) && !wet { outing = .ride }
+        case .ride?: if within(0.3, 0.75) && !wet { outing = .ride; at = way * (2.5 + 3.5 * where_) }
         case .rainWalk?: if within(0.25, 0.8) && wet { outing = .rainWalk; at = way * (1.5 + where_) }
         case .stargaze?: if alt < -12 && (minute >= 20 * 60 + 30 || minute < 60) && starry { outing = .stargaze; at = way * (2 + 4 * where_) }
-        case nil: break
+        case .kite?: if within(0.3, 0.93) { outing = wet ? .rainWalk : .kite; at = way * (2 + 3 * where_) }
+        case .picnic?: if within(0.35, 0.65) { outing = wet ? .rainWalk : .picnic; at = way * (1.8 + 2 * where_) }
+        case .flowers?: if within(0.3, 0.93) { outing = wet ? .rainWalk : .flowers; at = way * (1.6 + 2.4 * where_) }
+        case .garden?: if within(0.08, 0.6) && !wet { outing = .garden; at = Life.gardenAt }
+        case .snowman?:
+            if within(0.3, 0.7) && snowy { outing = .snowman; at = Life.snowmanAt }
+            snowman = later && snowy
+        case .skydive?: if within(0.3, 0.7) && starry && sky != .overcast { outing = .skydive; at = way * (2 + 5 * where_) }
+        case .farHike?: if within(0.3, 0.7) { outing = wet ? .rainWalk : .farHike; at = way * (3 + 8 * where_) }
+        case .pumpkins?, nil: break
         }
+        // Pumpkins: carved on the last Saturday before the end of October (by
+        // the local year), then lit by the steps every evening through the
+        // first of November. Day 1, 2000-01-01, was a Saturday.
+        let sinceSaturday = ((day - 1) % 7 + 7) % 7
+        func carvingWeek(_ y: Float) -> Bool { y >= 0.806 && y < 0.8252 }
+        let carvingDay = force == .pumpkins || (sinceSaturday == 0 && carvingWeek(year))
+        if carvingDay && within(0.6, 0.93) && !wet { outing = .pumpkins; at = Life.pumpkinsAt }
+        lanterns = carvingDay ? later : sinceSaturday > 0 && carvingWeek(year - Float(sinceSaturday) / 365.25) && year < 0.8355
         // Extra 0. Its own stream of draws, so the visitors stay as they were.
         if extras & 1 != 0 && outing == nil {
             var busy = SplitMix(state: UInt64(self.seed ^ 0x6a09e667) &* 0x9e3779b97f4a7c15 | 1)
@@ -91,7 +131,7 @@ struct Life {
             let dusk = rng.unit() < 0.5
             guard roll < chance, when(dusk), visits.count < 2 else { return }
             var x = dir * (near + (far - near) * spot)
-            if outing != nil && outing != .ride && (x > 0) == (at > 0) && abs(x - at) < 3 { x = -x }
+            if let o = outing, o != .skydive, o != .farHike, (x > 0) == (at > 0), abs(x - at) < 3 { x = -x }
             if visits.contains(where: { abs($0.at - x) < 2.5 }) { x += x > 0 ? 3 : -3 }
             visits.append(Visit(animal: animal, at: x, facing: side(), seed: s))
         }
@@ -118,7 +158,7 @@ private struct Look {
     var skirt: UInt32?, scarf: UInt32?, hat: UInt32?, pack: UInt32?
 }
 
-private enum Pose { case walk(Float), run, ski, sit(pointing: Bool) }
+private enum Pose { case walk(Float), run, ski, sit(pointing: Bool), kneel, ride }
 
 /// Her: mostly green and black-and-white, shoulder-length hair, glasses,
 /// flowing skirts in spring and autumn. Him: green and orange, a comfy green
@@ -164,9 +204,20 @@ private func person(_ o: inout Overlay, _ x: Float, _ y: Float, _ P: Float, _ f:
         legs = [[hip, at(0.2, 0.2), at(0.34, 0.03)], [hip, at(0.22, 0.17), at(0.37, 0.02)]]
         arms = [[shoulder, at(-0.12, 0.22), at(-0.16, 0.1)],
                 pointing ? [shoulder, at(0.04, 0.5), at(0.12, 0.64)] : [shoulder, at(0.06, 0.26), at(0.14, 0.2)]]
+    case .kneel:
+        // One knee down, reaching to the ground in front.
+        (hip, shoulder, head) = (at(0, 0.3), at(0.13, 0.57), at(0.18, 0.68))
+        legs = [[hip, at(-0.02, 0.04), at(-0.22, 0.03)], [hip, at(0.2, 0.25), at(0.19, 0.02)]]
+        arms = [[shoulder, at(0.2, 0.4), at(0.3, 0.2)], [shoulder, at(0.24, 0.43), at(0.35, 0.22)]]
+    case .ride:
+        // On a bike's saddle, feet on the pedals, hands on the bars (see `bike`).
+        (hip, shoulder, head) = (at(0, 0.7), at(0.16, 0.97), at(0.22, 1.09))
+        legs = [[hip, at(0.13, 0.5), at(-0.03, 0.33)], [hip, at(0.21, 0.5), at(0.17, 0.25)]]
+        arms = [[shoulder, at(0.28, 0.87), at(0.39, 0.74)], [shoulder, at(0.3, 0.86), at(0.41, 0.73)]]
     }
     if let to = armTo { arms[1] = [shoulder, ((shoulder.0 + to.0) / 2 + f * 0.04 * P, (shoulder.1 + to.1) / 2), to] }
     let sitting: Bool = { if case .sit = pose { return true } else { return false } }()
+    let upright: Bool = { switch pose { case .walk, .run, .ski: return true; default: return false } }()
 
     func leg(_ j: [(Float, Float)], _ shade: Float) {
         let skin = lit(look.skin) * shade, cloth = lit(look.legs) * shade
@@ -182,16 +233,20 @@ private func person(_ o: inout Overlay, _ x: Float, _ y: Float, _ P: Float, _ f:
     }
 
     // Back to front: the far arm and leg (in shadow), the pack, the body, the near ones, the head.
-    if let pack = look.pack, !sitting { line(at(-0.12, 0.74), at(-0.13, 0.55), 0.17, lit(pack)) }
+    if let pack = look.pack, upright { line(at(-0.12, 0.74), at(-0.13, 0.55), 0.17, lit(pack)) }
     arm(arms[0], 0.8)
     leg(legs[0], 0.8)
     line((hip.0, hip.1 - 0.04 * P), shoulder, 0.2, lit(look.top))
-    if look.coat && !sitting {
+    if look.coat && upright {
         o.polygon([at(-0.09, 0.76), at(0.11, 0.76), at(0.15, 0.3), at(-0.15, 0.3)], lit(look.top))
     }
     if let skirt = look.skirt {
         if sitting {
             o.polygon([at(-0.1, 0.18), at(0.0, 0.06), at(0.28, 0.13), at(0.24, 0.26)], lit(skirt))
+        } else if case .ride = pose {
+            o.polygon([at(-0.07, 0.82), at(0.08, 0.84), at(0.24, 0.5), at(-0.04, 0.55)], lit(skirt))
+        } else if case .kneel = pose {
+            o.polygon([at(-0.07, 0.42), at(0.08, 0.44), at(0.24, 0.2), at(-0.04, 0.08)], lit(skirt))
         } else {
             // It flows back as she walks; a white band at its hem.
             let hem = [at(-0.22, 0.28), at(-0.1, 0.26), at(0.02, 0.29), at(0.14, 0.27)]
@@ -201,7 +256,7 @@ private func person(_ o: inout Overlay, _ x: Float, _ y: Float, _ P: Float, _ f:
     }
     leg(legs[1], 1)
     if let scarf = look.scarf { line(at(-0.06, 0.8), at(0.09, 0.81), 0.07, lit(scarf)); line(at(-0.04, 0.8), at(-0.08, 0.64), 0.05, lit(scarf)) }
-    if look.pack != nil && !sitting { line(at(0.0, 0.77), at(0.05, 0.58), 0.025, lit(0x222226)) }  // its strap
+    if look.pack != nil && upright { line(at(0.0, 0.77), at(0.05, 0.58), 0.025, lit(0x222226)) }  // its strap
     arm(arms[1], 1)
 
     let (hx, hy) = head
@@ -319,6 +374,136 @@ private func hedgehog(_ o: inout Overlay, _ x: Float, _ y: Float, _ s: Float, _ 
     o.circle(x + f * 0.12 * s, y - 0.025 * s, 0.009 * s, spines * 0.3)
 }
 
+/// A pumpkin on the ground at (x, y), `r` its half-height: a carved one
+/// shows its face, lit from inside by `glow`.
+private func pumpkin(_ o: inout Overlay, _ x: Float, _ y: Float, _ r: Float, carved: Bool, glow: Float, _ lit: (UInt32) -> RGB) {
+    let cy = y - 0.8 * r
+    o.ellipse(x, cy, 1.2 * r, 0.82 * r, 0, lit(0xd0601c))
+    o.ellipse(x, cy, 0.75 * r, 0.8 * r, 0, lit(0xe8792b))  // its ribs
+    o.ellipse(x, cy, 0.3 * r, 0.78 * r, 0, lit(0xf08c3c))
+    o.line(x, cy - 0.7 * r, x + 0.12 * r, cy - 1.05 * r, 0.2 * r, lit(0x4a6a2a))  // the stem
+    guard carved else { return }
+    let face = lit(0x2a1408) + RGB(hex: 0xffa030) * (1.3 * glow)
+    for s: Float in [-1, 1] {
+        o.polygon([(x + s * 0.5 * r, cy - 0.1 * r), (x + s * 0.18 * r, cy - 0.1 * r), (x + s * 0.34 * r, cy - 0.42 * r)], face)
+    }
+    o.polygon([(x - 0.62 * r, cy + 0.16 * r), (x + 0.62 * r, cy + 0.16 * r), (x + 0.36 * r, cy + 0.5 * r), (x - 0.36 * r, cy + 0.5 * r)], face)
+    if glow > 0 { o.glow(x, cy, 1.8 * r, RGB(hex: 0xff8a2a) * (0.12 * glow)) }
+}
+
+/// A snowman, facing `f`: two balls, stick arms, and when `done` its head,
+/// a carrot nose, coal eyes, a hat and his green scarf.
+private func snowmanFigure(_ o: inout Overlay, _ x: Float, _ y: Float, _ P: Float, _ f: Float, done: Bool, snow: RGB,
+                           _ lit: (UInt32) -> RGB) {
+    let coal = lit(0x1c1c22), stick = lit(0x5a3c26)
+    for s: Float in [-1, 1] {
+        o.line(x + s * 0.1 * P, y - 0.5 * P, x + s * 0.32 * P, y - 0.66 * P, 0.025 * P, stick)
+        o.line(x + s * 0.25 * P, y - 0.61 * P, x + s * 0.29 * P, y - 0.73 * P, 0.018 * P, stick)
+    }
+    o.circle(x, y - 0.19 * P, 0.21 * P, snow * 0.92)
+    o.circle(x + f * 0.01 * P, y - 0.48 * P, 0.15 * P, snow * 0.96)
+    for up: Float in [0.42, 0.52] { o.circle(x + f * 0.11 * P, y - up * P, 0.018 * P, coal) }
+    guard done else { return }
+    let (hx, hy) = (x + f * 0.015 * P, y - 0.7 * P)
+    o.circle(hx, hy, 0.105 * P, snow)
+    o.line(x - 0.12 * P, y - 0.6 * P, x + 0.12 * P, y - 0.61 * P, 0.05 * P, lit(0x4f9a52))
+    o.line(x - f * 0.06 * P, y - 0.6 * P, x - f * 0.1 * P, y - 0.46 * P, 0.04 * P, lit(0x4f9a52))
+    o.polygon([(hx + f * 0.06 * P, hy - 0.02 * P), (hx + f * 0.24 * P, hy + 0.01 * P), (hx + f * 0.06 * P, hy + 0.025 * P)], lit(0xf08a2c))
+    o.circle(hx + f * 0.04 * P, hy - 0.04 * P, 0.016 * P, coal)
+    o.circle(hx + f * 0.085 * P, hy - 0.035 * P, 0.014 * P, coal)
+    o.polygon([(hx - 0.07 * P, hy - 0.08 * P), (hx + 0.07 * P, hy - 0.08 * P), (hx + 0.06 * P, hy - 0.21 * P), (hx - 0.06 * P, hy - 0.21 * P)], lit(0x2a2a30))
+    o.line(hx - 0.11 * P, hy - 0.08 * P, hx + 0.11 * P, hy - 0.08 * P, 0.025 * P, lit(0x2a2a30))
+}
+
+/// A diamond kite at (kx, ky), panels every color, on a sagging line from
+/// the hand at (hx, hy); its tail streams on downwind (toward `f`) with bows.
+private func kite(_ o: inout Overlay, _ hx: Float, _ hy: Float, _ kx: Float, _ ky: Float, _ P: Float, _ f: Float,
+                  _ lit: (UInt32) -> RGB) {
+    let thin = max(0.012 * P, 0.6)
+    var last = (hx, hy)
+    for i in 1...16 {
+        let t = Float(i) / 16
+        let p = (hx + (kx - hx) * t, hy + (ky - hy) * t + 1.2 * P * t * (1 - t))
+        o.line(last.0, last.1, p.0, p.1, thin, lit(0xe8e4da))
+        last = p
+    }
+    let (c, s) = (cosf(f * 0.35), sinf(f * 0.35))
+    func at(_ u: Float, _ v: Float) -> (Float, Float) { (kx + (u * c - v * s) * P, ky + (u * s + v * c) * P) }
+    let (top, right, bottom, left, mid) = (at(0, -0.38), at(0.28, -0.1), at(0, 0.5), at(-0.28, -0.1), at(0, -0.1))
+    for (a, b, color) in [(top, right, UInt32(0xd8433a)), (right, bottom, 0xf2c94c), (bottom, left, 0x3f7fd0), (left, top, 0x5aa65a)] {
+        o.polygon([mid, a, b], lit(color))
+    }
+    o.line(top.0, top.1, bottom.0, bottom.1, 0.02 * P, lit(0x3a2e26))
+    o.line(left.0, left.1, right.0, right.1, 0.02 * P, lit(0x3a2e26))
+    last = bottom
+    for i in 1...10 {
+        let p = (bottom.0 + f * 0.11 * P * Float(i), bottom.1 + 0.12 * P * Float(i) + 0.05 * P * sinf(Float(i) * 1.3))
+        o.line(last.0, last.1, p.0, p.1, thin, lit(0xf2f2ee))
+        if i % 3 == 0 {
+            let bow = lit(i == 6 ? 0xf2c94c : 0xd8433a)
+            o.polygon([p, (p.0 - 0.06 * P, p.1 - 0.04 * P), (p.0 - 0.06 * P, p.1 + 0.04 * P)], bow)
+            o.polygon([p, (p.0 + 0.06 * P, p.1 - 0.04 * P), (p.0 + 0.06 * P, p.1 + 0.04 * P)], bow)
+        }
+        last = p
+    }
+}
+
+/// Their vegetable bed, standing on the ground at (x, y): bare through
+/// winter (or under snow), sprouting in spring, lettuce and tomatoes on
+/// stakes through summer, pumpkins swelling until they're taken to carve.
+private func garden(_ o: inout Overlay, _ x: Float, _ y: Float, _ P: Float, year: Float, snow: RGB?, _ lit: (UInt32) -> RGB) {
+    let half = 0.5 * P, top = y - 0.13 * P
+    o.polygon([(x - half, top), (x + half, top), (x + half, y), (x - half, y)], lit(0x7a5434))
+    o.line(x - half, top, x + half, top, 0.05 * P, lit(0x3a2a1e))
+    for s: Float in [-1, 1] { o.line(x + s * half, top - 0.03 * P, x + s * half, y, 0.05 * P, lit(0x5a3c26)) }
+    if let snow {
+        o.ellipse(x, top - 0.01 * P, 1.05 * half, 0.06 * P, 0, snow)
+        return
+    }
+    let grow = smoothstep(0.27, 0.48, year)
+    guard grow > 0 && year < 0.86 else { return }
+    let leaf = mix(lit(0x4f8a3a), lit(0x9a8a4a), smoothstep(0.74, 0.82, year))  // yellowing in autumn
+    for k in 0..<6 {
+        let px = x - half + (Float(k) + 0.5) / 3 * half
+        if k % 2 == 0 {
+            o.ellipse(px, top - 0.04 * P * grow, (0.03 + 0.05 * grow) * P, (0.02 + 0.045 * grow) * P, 0, leaf)
+        } else {
+            let h = (0.06 + 0.4 * grow) * P
+            if year > 0.33 { o.line(px + 0.03 * P, top, px + 0.03 * P, top - 0.5 * P, 0.02 * P, lit(0x8a6a44)) }
+            o.line(px, top, px, top - h, (0.02 + 0.05 * grow) * P, leaf)
+            o.ellipse(px - 0.03 * P, top - 0.55 * h, 0.05 * P * grow + 0.01 * P, 0.03 * P, 0.5, leaf)
+            o.ellipse(px + 0.04 * P, top - 0.8 * h, 0.05 * P * grow + 0.01 * P, 0.03 * P, -0.5, leaf)
+            if year > 0.55 && year < 0.76 {
+                for (dx, up) in [(Float(-0.04), Float(0.4)), (0.045, 0.6), (-0.03, 0.78)] {
+                    o.circle(px + dx * P, top - up * h, 0.028 * P, lit(0xd8302a))
+                }
+            }
+        }
+    }
+    if year > 0.58 && year < 0.81 {
+        for (dx, s) in [(Float(-0.5), Float(1)), (0.45, -1)] {
+            o.line(x + dx * half, top - 0.01 * P, x + (dx + s * 0.35) * half, top - 0.02 * P, 0.02 * P, leaf)
+            pumpkin(&o, x + dx * half, top + 0.01 * P, (0.04 + 0.07 * smoothstep(0.58, 0.7, year)) * P, carved: false, glow: 0, lit)
+        }
+    }
+}
+
+/// A bunch of flowers held at (hx, hy), wrapped in white paper.
+private func bouquet(_ o: inout Overlay, _ hx: Float, _ hy: Float, _ P: Float, _ f: Float, _ lit: (UInt32) -> RGB) {
+    let heads: [(Float, Float, UInt32)] = [(-0.06, 0.2, 0xf7d23e), (0.0, 0.25, 0xfbfbf7), (0.06, 0.21, 0xd8a7e8),
+                                           (-0.03, 0.29, 0xe63b2e), (0.04, 0.3, 0x4a6fe0), (0.09, 0.26, 0xf7d23e)]
+    for (dx, up, _) in heads { o.line(hx, hy, hx + f * dx * P, hy - up * P, 0.012 * P, lit(0x4f8a3a)) }
+    for (dx, up, color) in heads { o.circle(hx + f * dx * P, hy - up * P, 0.035 * P, lit(color)) }
+    o.polygon([(hx - 0.05 * P, hy - 0.12 * P), (hx + 0.07 * P, hy - 0.12 * P), (hx + f * 0.01 * P, hy + 0.05 * P)], lit(0xf2efe6))
+}
+
+/// A wine glass with red in it, its stem held at (x, y).
+private func glass(_ o: inout Overlay, _ x: Float, _ y: Float, _ P: Float, _ lit: (UInt32) -> RGB) {
+    o.line(x, y - 0.02 * P, x, y + 0.04 * P, 0.012 * P, lit(0xdfe6ea))
+    o.polygon([(x - 0.035 * P, y - 0.09 * P), (x + 0.035 * P, y - 0.09 * P), (x + 0.02 * P, y - 0.02 * P), (x - 0.02 * P, y - 0.02 * P)], lit(0x8a1a2a))
+    o.line(x - 0.038 * P, y - 0.11 * P, x + 0.038 * P, y - 0.11 * P, 0.015 * P, lit(0xdfe6ea))
+}
+
 /// A bird on the wing, seen from the side or below: two wings bent at the
 /// wrist, `flap` lifting their tips.
 func flyingBird(_ o: inout Overlay, _ x: Float, _ y: Float, _ span: Float, _ flap: Float, _ broad: Float, _ color: RGB) {
@@ -330,15 +515,33 @@ func flyingBird(_ o: inout Overlay, _ x: Float, _ y: Float, _ span: Float, _ fla
 }
 
 extension Life {
-    /// Paints the two and their visitors onto the near hill's patch. `ground`
-    /// gives the hill's top at x; `clearing` the nearest x near another where
-    /// no tree stands on the ridge, for a figure that should show against the
-    /// sky, or NaN when there's none near.
+    /// Paints the two, their garden and their things, and their visitors
+    /// onto the near hill's patch. `ground` gives the hill's top at x;
+    /// `clearing` the nearest x near another where no tree stands on the
+    /// ridge, for a figure that should show against the sky, or NaN when
+    /// there's none near. `snow` is snow's color on things. `distant`
+    /// finds a spot on the range behind, near x, where a figure that tall
+    /// shows against the sky; `distantLit` gives a color as it looks there.
     func draw(_ o: inout Overlay, cabin: Scene.Cabin, H: Float, width: Float, year: Float, snowy: Bool,
-              ground: (Float) -> Float, clearing: (Float, Float) -> Float, lit: (UInt32) -> RGB, lamp: Float) {
+              ground: (Float) -> Float, clearing: (Float, Float) -> Float, lit: (UInt32) -> RGB, snow: RGB, lamp: Float,
+              distant: (Float, Float) -> (x: Float, y: Float)?, distantLit: (UInt32) -> RGB) {
         let P = 0.7 * cabin.wallH, unit = 2 * cabin.halfWidth
         func place(_ at: Float) -> Float { min(max(cabin.x + at * unit, 0.04 * width), 0.96 * width) }
         var rng = SplitMix(state: UInt64(seed) &* 0x2545f4914f6cdd1d | 1)
+
+        // Their things: the vegetable bed, a snowman, the pumpkins lit by the steps.
+        let gx = place(Life.gardenAt)
+        garden(&o, gx, ground(gx) + 0.006 * H, P, year: year, snow: snowy ? snow : nil, lit)
+        if snowman {
+            let x = place(Life.snowmanAt)
+            snowmanFigure(&o, x, ground(x) + 0.008 * H, P, 1, done: true, snow: snow, lit)
+        }
+        if lanterns {
+            for (dx, r) in [(Float(0.6), Float(0.13)), (0.85, 0.1), (1.12, 0.15)] {
+                let x = cabin.porch1 + dx * cabin.halfWidth
+                pumpkin(&o, x, ground(x) + 0.006 * H, r * P, carved: true, glow: lamp, lit)
+            }
+        }
 
         for v in visits {
             var r = SplitMix(state: UInt64(v.seed) | 1)
@@ -394,7 +597,7 @@ extension Life {
             }
         }
 
-        guard let outing, outing != .ride else { return }
+        guard let outing else { return }
         let far = abs(at) > 5
         let (her, him) = looks(year: year, snowy: snowy, far: far)
         let f = facing, s = 2 * rng.unit() - 1
@@ -445,7 +648,123 @@ extension Life {
             o.glow(lampX, lampY, 0.025 * P, RGB(0.6, 0.04, 0.01))
             o.glow(lampX, lampY, 0.12 * P, RGB(0.04, 0.003, 0.001))
         case .ride:
-            break
+            // Along the ridge, one behind the other: hers green, his orange.
+            let x = place(at), y = ground(x) + 0.01 * H
+            for (dx, look, color, scale) in [(Float(-0.75), her, UInt32(0x3f9a4a), Float(1)), (0.65, him, 0xe8792b, 1.05)] {
+                let sP = P * scale, r = sP / 3.5, px = x + f * dx * P
+                bike(&o, px - f * 0.95 * r, y - r, r, f, color, lit)
+                person(&o, px, y, sP, f, .ride, look, lit)
+            }
+        case .kite:
+            // On the meadow: he holds the line, she points it out.
+            let x = place(at), y = ground(x) + 0.008 * H, hand = (x + f * 0.42 * P, y - 0.98 * P)
+            person(&o, x - f * 0.3 * P, y - 0.002 * H, P, f, .walk(0.2), her, lit, armTo: (x - f * 0.12 * P, y - 1.0 * P))
+            person(&o, x + f * 0.22 * P, y, P * 1.05, f, .walk(-0.2), him, lit, armTo: hand)
+            kite(&o, hand.0, hand.1, x + f * 3.4 * P, y - 6.4 * P, P, f, lit)
+        case .picnic:
+            // On a checked blanket on the ridge, facing each other: bread,
+            // apples, a basket and a bottle of red between them, a glass each.
+            let gap = clearing(place(at), 1.3 * P)
+            let x = gap.isNaN ? place(at) : gap, y = ground(x) + (gap.isNaN ? 0.01 : 0.002) * H
+            for i in 0..<14 {
+                for row in 0..<2 {
+                    let (xa, xb) = (x - 1.05 * P + 0.15 * P * Float(i), x - 0.9 * P + 0.15 * P * Float(i))
+                    let (ya, yb) = (y - 0.06 * P + 0.03 * P * Float(row), y - 0.03 * P + 0.03 * P * Float(row))
+                    o.polygon([(xa, ya), (xb, ya), (xb, yb), (xa, yb)], lit((i + row) % 2 == 0 ? 0xd8433a : 0xf2efe6))
+                }
+            }
+            let bx = x - f * 0.22 * P
+            o.polygon([(bx - 0.11 * P, y - 0.2 * P), (bx + 0.11 * P, y - 0.2 * P), (bx + 0.09 * P, y - 0.05 * P), (bx - 0.09 * P, y - 0.05 * P)], lit(0x9a6a3a))
+            o.line(bx - 0.1 * P, y - 0.13 * P, bx + 0.1 * P, y - 0.13 * P, 0.015 * P, lit(0x7a5030))
+            for i in 0..<8 {  // its handle
+                let (a0, a1) = (Float(i) * .pi / 8, Float(i + 1) * .pi / 8)
+                o.line(bx + 0.09 * P * cosf(a0), y - 0.2 * P - 0.1 * P * sinf(a0), bx + 0.09 * P * cosf(a1), y - 0.2 * P - 0.1 * P * sinf(a1),
+                       0.018 * P, lit(0x7a5030))
+            }
+            let wx = x + f * 0.03 * P
+            o.line(wx, y - 0.07 * P, wx, y - 0.21 * P, 0.07 * P, lit(0x1f4a2a))
+            o.line(wx, y - 0.21 * P, wx, y - 0.33 * P, 0.03 * P, lit(0x1f4a2a))
+            o.line(wx, y - 0.11 * P, wx, y - 0.16 * P, 0.072 * P, lit(0xf2efe6))  // its label
+            o.ellipse(x + f * 0.22 * P, y - 0.09 * P, 0.11 * P, 0.035 * P, -f * 0.25, lit(0xd8a05a))  // a loaf
+            for dx: Float in [0.38, 0.45] { o.circle(x + f * dx * P, y - 0.1 * P, 0.038 * P, lit(0xc8302a)) }
+            let (herGlass, hisGlass) = ((x - f * 0.47 * P, y - 0.48 * P), (x + f * 0.48 * P, y - 0.5 * P))
+            person(&o, x - f * 0.78 * P, y, P, f, .sit(pointing: false), her, lit, armTo: herGlass)
+            person(&o, x + f * 0.8 * P, y, P * 1.05, -f, .sit(pointing: false), him, lit, armTo: hisGlass)
+            glass(&o, herGlass.0, herGlass.1, P, lit)
+            glass(&o, hisGlass.0, hisGlass.1, P, lit)
+        case .flowers:
+            // On the meadow: he kneels for one more, she carries the bouquet.
+            let x = place(at), y = ground(x) + 0.008 * H, hand = (x - f * 0.1 * P, y - 0.56 * P)
+            for (dx, color) in [(Float(0.62), UInt32(0xd8a7e8)), (0.95, 0xfbfbf7), (1.1, 0xe63b2e), (1.25, 0xf7d23e)] {
+                o.line(x + f * dx * P, y, x + f * dx * P, y - 0.12 * P, 0.012 * P, lit(0x4f8a3a))
+                o.circle(x + f * dx * P, y - 0.12 * P, 0.03 * P, lit(color))
+            }
+            person(&o, x + f * 0.42 * P, y, P * 1.05, f, .kneel, him, lit)
+            let pick = (x + f * (0.42 + 0.35 * 1.05) * P, y - 0.22 * 1.05 * P)
+            o.line(pick.0, pick.1, pick.0 + f * 0.02 * P, pick.1 - 0.1 * P, 0.012 * P, lit(0x4f8a3a))
+            o.circle(pick.0 + f * 0.02 * P, pick.1 - 0.1 * P, 0.03 * P, lit(0xf7d23e))
+            person(&o, x - f * 0.3 * P, y - 0.002 * H, P, f, .walk(s), her, lit, armTo: hand)
+            bouquet(&o, hand.0, hand.1, P, f, lit)
+        case .garden:
+            // Planting the bed: she kneels with a seedling, he waters from the green can.
+            let x = place(at), y = ground(x) + 0.008 * H
+            person(&o, x - f * 0.55 * P, y, P, f, .kneel, her, lit)
+            let sprout = (x - f * (0.55 - 0.35) * P, y - 0.22 * P)
+            o.ellipse(sprout.0 - 0.02 * P, sprout.1 - 0.04 * P, 0.03 * P, 0.015 * P, 0.6, lit(0x5aa65a))
+            o.ellipse(sprout.0 + 0.02 * P, sprout.1 - 0.04 * P, 0.03 * P, 0.015 * P, -0.6, lit(0x5aa65a))
+            let hand = (x + f * 0.64 * P, y - 0.55 * P)
+            person(&o, x + f * 0.86 * P, y, P * 1.05, -f, .walk(0.15), him, lit, armTo: hand)
+            let (cx, cy) = (hand.0 - f * 0.06 * P, hand.1 + 0.08 * P)
+            o.line(cx + f * 0.02 * P, cy - 0.04 * P, cx - f * 0.24 * P, cy - 0.1 * P, 0.025 * P, lit(0x3f8a52))  // the spout
+            o.polygon([(cx - 0.08 * P, cy - 0.06 * P), (cx + 0.08 * P, cy - 0.06 * P), (cx + 0.07 * P, cy + 0.06 * P), (cx - 0.07 * P, cy + 0.06 * P)],
+                      lit(0x3f8a52))
+            o.line(cx - f * 0.02 * P, cy - 0.06 * P, hand.0, hand.1, 0.02 * P, lit(0x2f6a3a))  // the handle
+            for i in 1...4 {
+                let t = Float(i)
+                o.circle(cx - f * (0.25 + 0.015 * t) * P, cy - 0.08 * P + 0.045 * P * t, 0.012 * P, lit(0xa8d0f0))
+            }
+        case .snowman:
+            // Building it: she sets its head on, he rolls one more ball.
+            let x = place(at), y = ground(x) + 0.008 * H, ball = x + 0.98 * P
+            snowmanFigure(&o, x, y, P, 1, done: false, snow: snow, lit)
+            person(&o, x - 0.42 * P, y - 0.002 * H, P, 1, .walk(0.3), her, lit, armTo: (x - 0.1 * P, y - 0.72 * P))
+            o.circle(x - 0.02 * P, y - 0.72 * P, 0.105 * P, snow)
+            o.circle(ball, y - 0.15 * P, 0.15 * P, snow * 0.92)
+            person(&o, x + 1.32 * P, y, P * 1.05, -1, .run, him, lit, armTo: (ball + 0.12 * P, y - 0.22 * P))
+        case .pumpkins:
+            // Carving them on the grass by the porch.
+            let x = place(at), y = ground(x) + 0.008 * H
+            pumpkin(&o, x - 0.12 * P, y, 0.13 * P, carved: true, glow: 0, lit)
+            pumpkin(&o, x + 0.17 * P, y, 0.1 * P, carved: false, glow: 0, lit)
+            person(&o, x - 0.55 * P, y - 0.002 * H, P, 1, .kneel, her, lit)
+            person(&o, x + 0.6 * P, y, P * 1.05, -1, .kneel, him, lit)
+            let hand = (x + (0.6 - 0.35 * 1.05) * P, y - 0.22 * 1.05 * P)
+            o.line(hand.0, hand.1, hand.0 - 0.08 * P, hand.1 - 0.03 * P, 0.02 * P, lit(0xc8c8c8))  // his knife
+        case .skydive:
+            // A tandem jump, coming down over the hill under a canopy in
+            // their colors: him behind, her in front, legs up for landing.
+            let x = place(at), hy = ground(x) - 8 * P
+            let (cx, R) = (x + f * 0.15 * P, 1.5 * P), cy = hy - 2.4 * P + R
+            func edge(_ a: Float, _ r: Float) -> (Float, Float) { (cx + r * sinf(a), cy - r * cosf(a)) }
+            for a: Float in [-0.8, -0.4, 0, 0.4, 0.8] {
+                let e = edge(a, R - 0.3 * P)
+                o.line(e.0, e.1, x, hy - 0.6 * P, max(0.01 * P, 0.5), lit(0x4a4a50))
+            }
+            for i in 0..<7 {
+                let (a0, a1) = (-0.8 + 1.6 * Float(i) / 7, -0.8 + 1.6 * Float(i + 1) / 7)
+                o.polygon([edge(a0, R), edge(a1, R), edge(a1, R - 0.3 * P), edge(a0, R - 0.3 * P)],
+                          lit([UInt32(0xe8792b), 0xf2f2ee, 0x3f8a52][i % 3]))
+            }
+            person(&o, x - f * 0.08 * P, hy - 0.1 * P, P * 1.05, f, .sit(pointing: false), him, lit)
+            person(&o, x + f * 0.08 * P, hy, P, f, .sit(pointing: true), her, lit)
+        case .farHike:
+            // Two specks with packs on the range behind, up on its crest.
+            let tiny = 0.2 * P
+            if let spot = distant(place(at), 1.2 * tiny) {
+                let (her, him) = looks(year: year, snowy: snowy, far: true)
+                person(&o, spot.x - f * 0.3 * tiny, spot.y + 0.03 * tiny, tiny, f, .walk(s), her, distantLit)
+                person(&o, spot.x + f * 0.3 * tiny, spot.y + 0.03 * tiny, tiny * 1.05, f, .walk(-s), him, distantLit)
+            }
         }
     }
 

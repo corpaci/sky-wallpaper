@@ -105,7 +105,22 @@ sun's phase or altitude), its season and its weather; the frame shows
 what of the plan falls on its minute. Figures are drawn as small antialiased
 shapes over the near hill (`Sprites.swift`), about two-thirds of the
 cabin's wall height; ridge scenes look for a gap between the trees within
-four cabin widths. Birds in the sky go behind the hills.
+four cabin widths. Birds in the sky go behind the hills. Seasonal outings
+are weighted in only in their weeks of the local year (kites 0.18–0.36 and
+0.70–0.84, the garden 0.24–0.36, flowers 0.26–0.50, picnics 0.36–0.70,
+the skydive 0.42–0.68), the snowman only on snowy days. A few things stay:
+the vegetable bed left of the cabin is always there and grows with the
+year (sprouts, lettuce and staked tomatoes, pumpkins until carving week,
+then bare or under snow); a snowman stands from its building at noon
+through that evening; pumpkins are carved on the Saturday that falls
+between 0.806 and 0.825 of the year (22–28 October in the north) and lit
+by the steps, as bright as the window, each evening through 1 November.
+The weekday comes from the day number (day 1 is Saturday, 2000-01-01).
+A kite, the skydive or the far hike lift the near hill's overlay to 0.35 of
+the height instead of 0.16. The far hike puts two figures a fifth of the
+usual size on the rocky range (layer 1), on its highest crest point within
+a tenth of the width where no nearer land, tree or crown covers them; when
+there is none, they're out of sight.
 
 **Extras** (`Extras.swift`, `Extras.cs`). Secret words, given with
 `--extra` (the installers ask for them last), that change how the sky
@@ -327,6 +342,12 @@ On macOS 26.6.2, M3, Swift 6.3.3, Mono 6.12 (Roslyn csc 3.9):
   359, a buzzard 294, hedgehogs 210, geese 196, roof birds 168, swallows
   160, the bear 102). Skiing and rain walks need snow or rain, so they
   didn't come up.
+  After the seasonal outings (2026-11-24), counted with the C# port over
+  the same years and place, clear skies, the fixed-altitude frames only
+  (no extra night frames), days a year with the outing in a frame: strolls
+  26, hikes 20, runs 10, stargazing 8, picnics 6.5, kites 6, flowers 5,
+  rides 4, far hikes 3, the garden 2, the skydive 1.5, pumpkin carving 1
+  (and 6 lantern days). The two are out in 2.7% of those frames.
 - **Astronomy.** `tests/astronomy.sh` checks known events and makes the C#
   port print the same numbers as Swift to three decimals:
 

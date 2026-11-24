@@ -866,9 +866,11 @@ struct Scene {
         let frostGlint = season.frost * smoothstep(-2, 4, alt) * 0.7
 
         // Small things in front of the near hill: flowers in their season,
-        // fireflies on warm midsummer nights.
+        // fireflies on warm midsummer nights. A kite, a parachute or the two
+        // far off on the range behind need more of the sky.
         let near = layerCount - 1
-        var nearOverlay = Overlay(x0: 0, y0: max(Int(ground[(near * width)..<((near + 1) * width)].min()! - 0.16 * H * ui), 0),
+        let headroom: Float = life.skyward ? 0.35 : 0.16
+        var nearOverlay = Overlay(x0: 0, y0: max(Int(ground[(near * width)..<((near + 1) * width)].min()! - headroom * H * ui), 0),
                                   x1: width, y1: height)
         let bloom = season.flowers * (1 - groundSnow)
         if bloom > 0 && daylight > 0 {
@@ -908,8 +910,36 @@ struct Scene {
             }
             return .nan  // none: they stay on the meadow
         }
+        let overlayTop = Float(nearOverlay.y0)
+        func distant(_ x0: Float, _ tall: Float) -> (x: Float, y: Float)? {
+            // The highest point of the rocky range's crest within a tenth of
+            // the width, where nothing nearer (land, cabin, trees) rises in
+            // front of a figure that tall.
+            var best: (x: Float, y: Float)?
+            let pad = max(Int(0.6 * tall), 1)
+            let lo = max(Int(x0 - 0.1 * W), pad), hi = max(min(Int(x0 + 0.1 * W), width - pad), lo)
+            for x in lo..<hi {
+                let y = ground[width + x]
+                guard best.map({ y < $0.y }) ?? true, y - tall > overlayTop else { continue }
+                var open = true
+                look: for cx in (x - pad)...(x + pad) {
+                    for l in 2..<layerCount {
+                        for s in 0..<sub where top[(l * width + cx) * sub + s] < y + 1 { open = false; break look }
+                        for ty in max(Int(y - tall), 0)...max(Int(y), 0) {
+                            if trees[(l * height + ty) * width + cx] > 20 || leaves[((l - 2) * height + ty) * width + cx] > 20 {
+                                open = false
+                                break look
+                            }
+                        }
+                    }
+                }
+                if open { best = (Float(x) + 0.5, y) }
+            }
+            return best
+        }
         life.draw(&nearOverlay, cabin: cabin, H: H * ui, width: W, year: season.year, snowy: groundSnow > 0.3,
-                  ground: ridge, clearing: clearing, lit: lit, lamp: windowLight)
+                  ground: ridge, clearing: clearing, lit: lit, snow: snowOnTop, lamp: windowLight,
+                  distant: distant, distantLit: { inLayer(RGB(hex: $0), 1) })
         let skyBirds = life.drawSky(width: W, H: H, ui: ui, color: mixOklab(pal.land * 0.7, pal.mid, 0.3))
         // Fallen leaves on the ground around the leafy trees, gathering as
         // the trees let them go, browning through winter, until snow covers

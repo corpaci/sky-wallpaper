@@ -69,7 +69,13 @@ times its real size, as it looks to us, and bigger still near the horizon.
 ## Who lives there
 
 Two people. Now and then they go out: a stroll, a run, a hike or ski tour,
-a bike ride, a walk under a rainbow umbrella, stargazing on meteor nights.
+a bike ride, a walk under a rainbow umbrella, stargazing on meteor nights,
+or a hike so far off they're two specks on the range behind. Some things
+keep to their season: a kite in spring and autumn wind, planting their
+vegetable bed and picking flowers in spring, a picnic with a bottle of red
+and, now and then, a tandem skydive in summer, a snowman when there's snow.
+On the last Saturday in October they carve pumpkins, and the lanterns glow
+by the steps until November.
 Visitors come at their own hours: deer at dawn and dusk, a fox, hares,
 hedgehogs on summer nights, swallows, geese, and, rarely, a bear with two cubs.
 
@@ -210,7 +216,10 @@ Nothing else leaves your machine.
 
 `--sky rain` forces one weather for every frame, `--forecast FILE` reads a
 saved forecast, `--seed 7` grows another landscape (`SEED` for `make.sh`,
-`-Seed` on Windows).
+`-Seed` on Windows). `--outing kite` makes it a day for one of the two's
+outings, whatever the season, to preview it: `stroll`, `run`, `hike`, `ski`,
+`stargaze`, `rain-walk`, `ride`, `kite`, `picnic`, `flowers`, `garden`,
+`snowman`, `pumpkins`, `skydive`, `far-hike`. Each still keeps to its hours.
 
 ### Your own images (macOS)
 

@@ -2,7 +2,7 @@
 //
 //   wallframes [--size 2560x1664] [--seed 7] [--scale 1] [--out frames] [--dry-run] [--extra WORD]...
 //              [--sunrise 07:20 --sunset 17:55 | --lat 48.2 --lon 16.4
-//               [--date yyyy-MM-dd] [--utc-offset MINUTES]]
+//               [--date yyyy-MM-dd] [--utc-offset MINUTES]] [--outing NAME]
 //
 // Writes one PNG per frame plus manifest.txt, the input heicpack expects.
 // Frames sit at fixed sun altitudes, so they bunch up around sunrise and
@@ -14,7 +14,9 @@
 // of the secret words in Extras.swift; any other word is an error. --scale
 // (1, 1.25, 1.5, 1.75 or 2) draws the cabin, trees, people, animals, sun
 // and moon that much bigger, as Windows scales its UI on small screens with
-// many pixels; the land and the mountains keep their size.
+// many pixels; the land and the mountains keep their size. --outing makes
+// the day one for that outing of the two's (kite, picnic, skydive, ...),
+// whatever the season, to preview it.
 
 import Foundation
 import ImageIO
@@ -23,7 +25,7 @@ import UniformTypeIdentifiers
 let usage = """
     usage: wallframes [--size WIDTHxHEIGHT] [--seed N] [--scale 1|1.25|1.5|1.75|2] [--out DIR] [--dry-run] [--extra WORD]...
                       [--sunrise HH:MM --sunset HH:MM | --lat DEG --lon DEG
-                       [--date yyyy-MM-dd] [--utc-offset MINUTES]]
+                       [--date yyyy-MM-dd] [--utc-offset MINUTES]] [--outing NAME]
     """
 
 func fail(_ msg: String) -> Never {
@@ -55,7 +57,7 @@ func writePNG(_ rgbx: [UInt8], width: Int, height: Int, to url: URL) {
 var width = 2560, height = 1664, sunrise = 7 * 60 + 20, sunset = 17 * 60 + 55
 var seed: UInt32 = 7, outDir = "frames", dryRun = false, extras: UInt32 = 0, scale: Float = 1
 var latitude: Double?, longitude: Double?, date: String?, utcOffset: Int?, forcedSky: Sky?
-var fetchWeather = false, forecastFile: String?
+var fetchWeather = false, forecastFile: String?, forcedOuting: Life.Outing?
 var args = CommandLine.arguments.dropFirst()
 while let flag = args.popFirst() {
     if flag == "-h" || flag == "--help" { print(usage); exit(0) }
@@ -95,6 +97,11 @@ while let flag = args.popFirst() {
         guard let s = Sky(rawValue: value) else { fail("--sky wants one of: \(Sky.allCases.map(\.rawValue).joined(separator: ", "))") }
         forcedSky = s
     case "--forecast": forecastFile = value
+    case "--outing":
+        guard let o = Life.Outing(rawValue: value) else {
+            fail("--outing wants one of: \(Life.Outing.allCases.map(\.rawValue).joined(separator: ", "))")
+        }
+        forcedOuting = o
     case "--utc-offset":
         guard let v = Int(value), (-14 * 60...14 * 60).contains(v) else { fail("--utc-offset wants minutes, e.g. 60") }
         utcOffset = v
@@ -231,7 +238,8 @@ for (i, frame) in frames.enumerated() {
     let sky = Ephemeris(latitude: skyLatitude, longitude: skyLongitude, d: d)
     let season = forecast?.ground(baseSeason, hour: frame.minute / 60) ?? baseSeason
     let meteors = meteorShower(month: ymd[1], day: ymd[2], minute: frame.minute)
-    let life = Life(day: dayIndex, seed: seed, minute: frame.minute, sun: sun, season: season, sky: frame.sky, starNight: meteors != nil, extras: extras)
+    let life = Life(day: dayIndex, seed: seed, minute: frame.minute, sun: sun, season: season, sky: frame.sky, starNight: meteors != nil, extras: extras,
+                    force: forcedOuting)
     let pixels = scene.render(minute: frame.minute, sun: sun, sky: sky, season: season, meteors: meteors, life: life,
                               salt: hash32(UInt32(i) &+ seed), weather: Weather(frame.sky))
     writePNG(pixels, width: width, height: height, to: dir.appendingPathComponent(name))

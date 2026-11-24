@@ -23,20 +23,26 @@ func drawCabinThings(_ o: inout Overlay, cabin: Scene.Cabin, H: Float, snow: Flo
     guard bikesHome else { return }
     let r = 0.2 * wallH, gy = b + 0.004 * H
     for (k, color) in [UInt32(0x3f9a4a), 0xe8792b].enumerated() {
-        let (rx, ry) = (cabin.porch0 + 0.15 * hw + Float(k) * 0.55 * r, gy - r + Float(k) * 0.25 * r)
-        let (fx, cxr) = (rx + 2.6 * r, rx + 1.15 * r)
-        let (sx, sy, hx, hy) = (rx + 0.95 * r, ry - 1.25 * r, rx + 2.2 * r, ry - 1.25 * r)
-        let tyre = lit(0x1c1c1c), frame = lit(color), t = 0.13 * r
-        for wx in [rx, fx] {
-            for i in 0..<16 {
-                let (a0, a1) = (Float(i) * .pi / 8, Float(i + 1) * .pi / 8)
-                o.line(wx + r * cosf(a0), ry + r * sinf(a0), wx + r * cosf(a1), ry + r * sinf(a1), 0.12 * r, tyre)
-            }
-        }
-        for (x0, y0, x1, y1) in [(rx, ry, sx, sy), (rx, ry, cxr, ry), (cxr, ry, sx, sy), (sx, sy, hx, hy), (cxr, ry, hx, hy), (hx, hy, fx, ry)] {
-            o.line(x0, y0, x1, y1, t, frame)
-        }
-        o.line(sx - 0.2 * r, sy - 0.15 * r, sx + 0.25 * r, sy - 0.15 * r, 0.14 * r, tyre)   // saddle
-        o.line(hx, hy, hx + 0.15 * r, hy - 0.3 * r, t, tyre)                                // handlebar
+        bike(&o, cabin.porch0 + 0.15 * hw + Float(k) * 0.55 * r, gy - r + Float(k) * 0.25 * r, r, 1, color, lit)
     }
+}
+
+/// A bike from the side, facing `f`: its back wheel's hub at (rx, ry),
+/// wheels of radius r. Its saddle is 0.95 r ahead of the hub and 1.4 r
+/// above it, the bars' grips 2.35 r ahead and 1.55 r above.
+func bike(_ o: inout Overlay, _ rx: Float, _ ry: Float, _ r: Float, _ f: Float, _ color: UInt32, _ lit: (UInt32) -> RGB) {
+    let (fx, cxr) = (rx + f * 2.6 * r, rx + f * 1.15 * r)
+    let (sx, sy, hx, hy) = (rx + f * 0.95 * r, ry - 1.25 * r, rx + f * 2.2 * r, ry - 1.25 * r)
+    let tyre = lit(0x1c1c1c), frame = lit(color), t = 0.13 * r
+    for wx in [rx, fx] {
+        for i in 0..<16 {
+            let (a0, a1) = (Float(i) * .pi / 8, Float(i + 1) * .pi / 8)
+            o.line(wx + r * cosf(a0), ry + r * sinf(a0), wx + r * cosf(a1), ry + r * sinf(a1), 0.12 * r, tyre)
+        }
+    }
+    for (x0, y0, x1, y1) in [(rx, ry, sx, sy), (rx, ry, cxr, ry), (cxr, ry, sx, sy), (sx, sy, hx, hy), (cxr, ry, hx, hy), (hx, hy, fx, ry)] {
+        o.line(x0, y0, x1, y1, t, frame)
+    }
+    o.line(sx - f * 0.2 * r, sy - 0.15 * r, sx + f * 0.25 * r, sy - 0.15 * r, 0.14 * r, tyre)   // saddle
+    o.line(hx, hy, hx + f * 0.15 * r, hy - 0.3 * r, t, tyre)                                // handlebar
 }

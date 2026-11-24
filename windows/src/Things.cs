@@ -31,25 +31,30 @@ static class Things
         float r = 0.2f * wallH, gy = b + 0.004f * H;
         uint[] colors = { 0x3f9a4a, 0xe8792b };
         for (int k = 0; k < 2; k++)
+            Bike(o, cabin.Porch0 + 0.15f * hw + k * 0.55f * r, gy - r + k * 0.25f * r, r, 1, colors[k], lit);
+    }
+
+    /// A bike from the side, facing `f`: its back wheel's hub at (rx, ry),
+    /// wheels of radius r. Its saddle is 0.95 r ahead of the hub and 1.4 r
+    /// above it, the bars' grips 2.35 r ahead and 1.55 r above.
+    public static void Bike(Overlay o, float rx, float ry, float r, float f, uint color, Func<uint, RGB> lit)
+    {
+        float fx = rx + f * 2.6f * r, cxr = rx + f * 1.15f * r;
+        float sx = rx + f * 0.95f * r, sy = ry - 1.25f * r, hx = rx + f * 2.2f * r, hy = ry - 1.25f * r;
+        RGB tyre = lit(0x1c1c1c), frame = lit(color);
+        float t = 0.13f * r;
+        foreach (float wx in new[] { rx, fx })
         {
-            float rx = cabin.Porch0 + 0.15f * hw + k * 0.55f * r, ry = gy - r + k * 0.25f * r;
-            float fx = rx + 2.6f * r, cxr = rx + 1.15f * r;
-            float sx = rx + 0.95f * r, sy = ry - 1.25f * r, hx = rx + 2.2f * r, hy = ry - 1.25f * r;
-            RGB tyre = lit(0x1c1c1c), frame = lit(colors[k]);
-            float t = 0.13f * r;
-            foreach (float wx in new[] { rx, fx })
+            for (int i = 0; i < 16; i++)
             {
-                for (int i = 0; i < 16; i++)
-                {
-                    float a0 = i * (float)Math.PI / 8, a1 = (i + 1) * (float)Math.PI / 8;
-                    o.Line(wx + r * (float)Math.Cos(a0), ry + r * (float)Math.Sin(a0), wx + r * (float)Math.Cos(a1), ry + r * (float)Math.Sin(a1), 0.12f * r, tyre);
-                }
+                float a0 = i * (float)Math.PI / 8, a1 = (i + 1) * (float)Math.PI / 8;
+                o.Line(wx + r * (float)Math.Cos(a0), ry + r * (float)Math.Sin(a0), wx + r * (float)Math.Cos(a1), ry + r * (float)Math.Sin(a1), 0.12f * r, tyre);
             }
-            float[][] tubes = { new[] { rx, ry, sx, sy }, new[] { rx, ry, cxr, ry }, new[] { cxr, ry, sx, sy },
-                                new[] { sx, sy, hx, hy }, new[] { cxr, ry, hx, hy }, new[] { hx, hy, fx, ry } };
-            foreach (float[] l in tubes) o.Line(l[0], l[1], l[2], l[3], t, frame);
-            o.Line(sx - 0.2f * r, sy - 0.15f * r, sx + 0.25f * r, sy - 0.15f * r, 0.14f * r, tyre);  // saddle
-            o.Line(hx, hy, hx + 0.15f * r, hy - 0.3f * r, t, tyre);                                // handlebar
         }
+        float[][] bars = { new[] { rx, ry, sx, sy }, new[] { rx, ry, cxr, ry }, new[] { cxr, ry, sx, sy },
+                           new[] { sx, sy, hx, hy }, new[] { cxr, ry, hx, hy }, new[] { hx, hy, fx, ry } };
+        foreach (float[] bar in bars) o.Line(bar[0], bar[1], bar[2], bar[3], t, frame);
+        o.Line(sx - f * 0.2f * r, sy - 0.15f * r, sx + f * 0.25f * r, sy - 0.15f * r, 0.14f * r, tyre);   // saddle
+        o.Line(hx, hy, hx + f * 0.15f * r, hy - 0.3f * r, t, tyre);                                      // handlebar
     }
 }

@@ -107,7 +107,7 @@ sealed class FrameSet
 static class Program
 {
     const string Usage = @"usage: sky render [--size WxH]... [--seed N] [--scale 1|1.25|1.5|1.75|2] [--dry-run] [--extra WORD]... --out DIR
-           [--sunrise HH:MM --sunset HH:MM | --lat DEG --lon DEG [--date yyyy-MM-dd] [--utc-offset MIN]]
+           [--sunrise HH:MM --sunset HH:MM | --lat DEG --lon DEG [--date yyyy-MM-dd] [--utc-offset MIN]] [--outing NAME]
        sky apply DIR | sky frame DIR HH:MM [WxH] | sky schedule DIR | sky task-xml DIR
        sky tick [--force] | sky follow | sky follow-task | sky monitors | sky save FILE | sky restore FILE
        sky extra WORD...";
@@ -473,6 +473,7 @@ static class Program
         double? latitude = null, longitude = null;
         int? utcOffset = null;
         Sky? forcedSky = null;
+        Activity? forcedOuting = null;
         for (int i = 0; i < args.Count; i++)
         {
             string flag = args[i];
@@ -525,6 +526,11 @@ static class Program
                     break;
                 case "--forecast":
                     forecastFile = value;
+                    break;
+                case "--outing":
+                    int o = Array.IndexOf(Life.OutingNames, value);
+                    if (o < 0) throw new UsageException("--outing wants one of: " + string.Join(", ", Life.OutingNames));
+                    forcedOuting = (Activity)o;
                     break;
                 case "--utc-offset":
                     int offset;
@@ -684,7 +690,7 @@ static class Program
                                         Ephemeris.DayNumber(skyDay.Year, skyDay.Month, skyDay.Day, (f.Exact ? f.Minute : (f.Minute + end) / 2.0) - skyOffset));
                 Season season = forecast != null ? forecast.Ground(baseSeason, f.Minute / 60) : baseSeason;
                 MeteorShower meteors = MeteorShower.At(skyDay.Month, skyDay.Day, f.Minute);
-                var life = new Life(dayIndex, seed, f.Minute, sun, season, f.Sky, meteors != null, extras);
+                var life = new Life(dayIndex, seed, f.Minute, sun, season, f.Sky, meteors != null, extras, forcedOuting);
                 byte[] pixels = scene.Render(f.Minute, sun, sky, season, meteors, life, Col.Hash32(unchecked((uint)i + seed)), new Weather(f.Sky));
                 Png.Write(Path.Combine(dir, name), pixels, width, height);
                 manifest.Add(Clock(f.Minute) + "  " + name + (f.Flags == "" ? "" : "  " + f.Flags));
