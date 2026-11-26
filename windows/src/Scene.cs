@@ -1063,7 +1063,10 @@ sealed class Scene
         summit.SnowAlt = snowAlt;
         RGB apple = RGB.Hex(0xc8302a);
         int snowAbove = Math.Max((int)Math.Round(2.5f * thing, MidpointRounding.AwayFromZero), 1);  // how far above a branch to look for open air: how deep the snow
-        RGB snowOnTop = Col.Mix(snowGround, new RGB(1, 1, 1), 0.3f);
+        // Snow on branch tops and the roof faces the sky, so it's a little
+        // brighter than the snow on the ground, but it takes the same light:
+        // white by day, the ground snow's dim blue at night.
+        RGB snowOnTop = Col.Mix(snowGround * (2.6f - 1.5f * daylight), new RGB(1, 1, 1), 0.3f * daylight);
         RGB frostColor = Col.MixOklab(pal.Mid, new RGB(1, 1, 1), 0.55f) * 1.1f;
         float frostGlint = season.Frost * Col.Smoothstep(-2, 4, alt) * 0.7f;
 
@@ -1386,7 +1389,8 @@ sealed class Scene
                             }
                         }
                     }
-                    if (groundSnow > 0 && tree > 0.3f)
+                    float holds = Math.Max(spruceCov, leafCov * season.LeafFill);  // not the few dead leaves kept through winter
+                    if (groundSnow > 0 && holds > 0.3f)
                     {
                         // Snow settled on the tops of branches: tree here, open air just above.
                         float above = 0;
@@ -1395,7 +1399,7 @@ sealed class Scene
                             above = trees[(l * Height + y - snowAbove) * width + x] / 255f;
                             if (l >= 2) above = Math.Max(above, leaves[((l - 2) * Height + y - snowAbove) * width + x] / 255f * season.LeafFill);
                         }
-                        tone = Col.Mix(tone, Col.Mix(snowOnTop, fog, layer.Haze * 0.5f), 0.85f * groundSnow * Col.Clamp01(tree - above));
+                        tone = Col.Mix(tone, Col.Mix(snowOnTop, fog, layer.Haze * 0.5f), 0.85f * groundSnow * Col.Clamp01(holds - above));
                     }
                     if (groundSnow > 0 && l == near && Math.Abs(fx - cabin.X) < 1.1f * cabin.HalfWidth && land > 0)
                     {

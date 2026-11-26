@@ -780,8 +780,9 @@ sealed class Life
             }
             case Activity.Stargaze:
             {
-                // On a blanket on the ridge, against the stars: she points, his
-                // red headlamp keeps their eyes dark-adapted, the telescope looks up.
+                // On a blanket on the ridge, against the stars: she points, he
+                // reads a star chart on his knees by a red torch, which keeps
+                // their eyes dark-adapted, and the telescope looks up.
                 float gap = clearing(place(At), 1.2f * P);
                 float x = float.IsNaN(gap) ? place(At) : gap, y = ground(x) + (float.IsNaN(gap) ? 0.01f : 0.002f) * H;
                 o.Ellipse(x + fc * 0.1f * P, y - 0.015f * P, 0.65f * P, 0.05f * P, 0, lit(0x8a3a3a));
@@ -790,9 +791,11 @@ sealed class Life
                 float tx = x + fc * 0.85f * P;
                 foreach (float dx in new[] { -0.13f, 0.02f, 0.14f }) o.Line(tx, y - 0.42f * P, tx + fc * dx * P, y, 0.02f * P, lit(0x3a3a3a));
                 o.Line(tx - fc * 0.12f * P, y - 0.36f * P, tx + fc * 0.14f * P, y - 0.64f * P, 0.07f * P, lit(0xd8d8d0));
-                float lampX = x + fc * (0.15f - 0.09f * 1.05f) * P, lampY = y - 0.5f * 1.05f * P;
-                o.Glow(lampX, lampY, 0.025f * P, new RGB(0.6f, 0.04f, 0.01f));
-                o.Glow(lampX, lampY, 0.12f * P, new RGB(0.04f, 0.003f, 0.001f));
+                float hx = x + fc * 0.15f * P, hP = 1.05f * P;  // him
+                RGB red = new RGB(0.6f, 0.04f, 0.01f);
+                o.Line(hx + fc * 0.05f * hP, y - 0.25f * hP, hx + fc * 0.21f * hP, y - 0.33f * hP, 0.025f * hP, lit(0xe8e2d4) + red * 0.35f);  // the chart
+                o.Glow(hx + fc * 0.08f * hP, y - 0.3f * hP, 0.012f * P, red * 0.5f);  // the torch
+                o.Glow(hx + fc * 0.13f * hP, y - 0.3f * hP, 0.09f * P, red * 0.06f);
                 break;
             }
             case Activity.Ride:

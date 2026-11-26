@@ -861,7 +861,10 @@ struct Scene {
         }
         let apple = RGB(hex: 0xc8302a)
         let snowAbove = max(Int((2.5 * thing).rounded()), 1)  // how far above a branch to look for open air: how deep the snow
-        let snowOnTop = mix(snowGround, RGB(1, 1, 1), 0.3)
+        // Snow on branch tops and the roof faces the sky, so it's a little
+        // brighter than the snow on the ground, but it takes the same light:
+        // white by day, the ground snow's dim blue at night.
+        let snowOnTop = mix(snowGround * (2.6 - 1.5 * daylight), RGB(1, 1, 1), 0.3 * daylight)
         let frostColor = mixOklab(pal.mid, RGB(1, 1, 1), 0.55) * 1.1
         let frostGlint = season.frost * smoothstep(-2, 4, alt) * 0.7
 
@@ -1144,14 +1147,15 @@ struct Scene {
                                 }
                             }
                         }
-                        if groundSnow > 0 && tree > 0.3 {
+                        let holds = max(spruceCov, leafCov * season.leafFill)  // not the few dead leaves kept through winter
+                        if groundSnow > 0 && holds > 0.3 {
                             // Snow settled on the tops of branches: tree here, open air just above.
                             var above: Float = 0
                             if y >= snowAbove {
                                 above = Float(trees[(l * height + y - snowAbove) * width + x]) / 255
                                 if l >= 2 { above = max(above, Float(leaves[((l - 2) * height + y - snowAbove) * width + x]) / 255 * season.leafFill) }
                             }
-                            tone = mix(tone, mix(snowOnTop, fog, layer.haze * 0.5), 0.85 * groundSnow * clamp01(tree - above))
+                            tone = mix(tone, mix(snowOnTop, fog, layer.haze * 0.5), 0.85 * groundSnow * clamp01(holds - above))
                         }
                         if groundSnow > 0 && l == near && abs(fx - cabin.x) < 1.1 * cabin.halfWidth && land > 0 {
                             // And on the roof.

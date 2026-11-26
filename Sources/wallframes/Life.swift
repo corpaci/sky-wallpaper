@@ -634,8 +634,9 @@ extension Life {
                 o.line(px + f * 0.18 * sP, y - 0.52 * sP, px + f * 0.02 * sP, y, 0.02 * sP, lit(0x3a3a3a))
             }
         case .stargaze:
-            // On a blanket on the ridge, against the stars: she points, his
-            // red headlamp keeps their eyes dark-adapted, the telescope looks up.
+            // On a blanket on the ridge, against the stars: she points, he
+            // reads a star chart on his knees by a red torch, which keeps
+            // their eyes dark-adapted, and the telescope looks up.
             let gap = clearing(place(at), 1.2 * P)
             let x = gap.isNaN ? place(at) : gap, y = ground(x) + (gap.isNaN ? 0.01 : 0.002) * H
             o.ellipse(x + f * 0.1 * P, y - 0.015 * P, 0.65 * P, 0.05 * P, 0, lit(0x8a3a3a))
@@ -644,9 +645,11 @@ extension Life {
             let tx = x + f * 0.85 * P
             for dx in [Float(-0.13), 0.02, 0.14] { o.line(tx, y - 0.42 * P, tx + f * dx * P, y, 0.02 * P, lit(0x3a3a3a)) }
             o.line(tx - f * 0.12 * P, y - 0.36 * P, tx + f * 0.14 * P, y - 0.64 * P, 0.07 * P, lit(0xd8d8d0))
-            let lampX = x + f * (0.15 - 0.09 * 1.05) * P, lampY = y - 0.5 * 1.05 * P
-            o.glow(lampX, lampY, 0.025 * P, RGB(0.6, 0.04, 0.01))
-            o.glow(lampX, lampY, 0.12 * P, RGB(0.04, 0.003, 0.001))
+            let hx = x + f * 0.15 * P, hP = 1.05 * P  // him
+            let red = RGB(0.6, 0.04, 0.01)
+            o.line(hx + f * 0.05 * hP, y - 0.25 * hP, hx + f * 0.21 * hP, y - 0.33 * hP, 0.025 * hP, lit(0xe8e2d4) + red * 0.35)  // the chart
+            o.glow(hx + f * 0.08 * hP, y - 0.3 * hP, 0.012 * P, red * 0.5)  // the torch
+            o.glow(hx + f * 0.13 * hP, y - 0.3 * hP, 0.09 * P, red * 0.06)
         case .ride:
             // Along the ridge, one behind the other: hers green, his orange.
             let x = place(at), y = ground(x) + 0.01 * H
