@@ -162,7 +162,8 @@ isn't mirrored, and no cloud covers the sky:
   - far off, the lumps flatten and fade into haze;
   - its soft, lumpy base rises and dips along the cabin's hill, always above
     the leafy crowns (the tallest reach 0.053 of the screen height above the
-    ground), so only the tall spruces' tops fade up into it; it frays into
+    ground), so only the tall spruces' tops stand up against it, drawn in
+    front of it; it frays into
     soft tongues over the hills beyond, which lie in grey shade under it;
   - the cabin's hill takes the sea's soft light: its meadow lifts 30% toward
     the clouds' shaded grey, while the cabin and the spruces stay dark.

@@ -879,8 +879,8 @@ sealed class Scene
         // moon's at night. Far off, the lumps grow too small to see and it fades
         // into haze. Cloudy days break it open: through wide gaps the world
         // below shows. Seen from the cabin's hill it's a layer: its lumpy, soft
-        // base hangs just above the leafy crowns, so only the tall spruces' tops
-        // fade up into it, and frays into tongues over the hills beyond, which
+        // base hangs just above the leafy crowns, behind the tall spruces whose
+        // tops stand up against it, and frays into tongues over the hills beyond, which
         // lie in its grey shade; the cabin's hill takes its soft light.
         RGB seaLit = Col.MixOklab(pal.Horizon, pal.Glow, 0.5f) * 1.3f;
         RGB seaShade = Col.MixOklab(pal.Mid, pal.Horizon, 0.5f) * 0.75f;
@@ -906,7 +906,7 @@ sealed class Scene
         {
             // Its base, over the hill: lumpy, rising and dipping along it, and
             // always above the leafy crowns (the tallest reach 0.053 of the
-            // height), so only the tall spruces' tops go up into it.
+            // height), so only the tall spruces' tops stand up against it.
             float swell = Col.Clamp01(0.5f + 0.6f * Col.Fbm(x / H * 1.6f + drift, 2, seaSeed ^ 0x1b873593));
             seaEdge[x] = ground[(Layers.Length - 1) * width + x] - (0.07f + 0.028f * swell) * H
                 - 0.012f * H * Math.Abs(Col.Fbm(x / H * 9 + drift * 3, 3, seaSeed ^ 0x5bd1e995));
@@ -1252,6 +1252,7 @@ sealed class Scene
                 }
 
                 float frontTree = 0;  // how much of this pixel is tree or porch, in front
+                float nearTree = 0;   // how much is the cabin hill's trees or porch, in front of the clouds
                 for (int l = 0; l < Layers.Length; l++)
                 {
                     if (l == near && seaBase > 0 && fy > seaEdge[x] && fy < seaEdge[x] + 0.04f * H)
@@ -1435,16 +1436,11 @@ sealed class Scene
                         tone = Col.Mix(tone, valleyColor, w.Valley * lake * (1 - 0.5f * tree));
                     }
                     tone = tone + pal.Glow * (g * layer.Haze * 0.8f);  // in-scattered sun
-                    if (seaRows > 0 && l >= 2)
-                    {
-                        if (l < Layers.Length - 1)
-                            tone = Col.Mix(tone, seaShade * 0.5f, 0.45f * w.Sea);  // the hills beyond, in the clouds' shade
-                        else if (fy < gy)
-                            // The tall spruces' tops fade up into the clouds' base.
-                            tone = Col.Mix(tone, seaHazeColor, 0.6f * seaBase * Col.Smoothstep(seaEdge[x] + 0.015f * H, seaEdge[x], fy));
-                    }
+                    if (seaRows > 0 && l >= 2 && l < Layers.Length - 1)
+                        tone = Col.Mix(tone, seaShade * 0.5f, 0.45f * w.Sea);  // the hills beyond, in the clouds' shade
                     c = cov == 1 ? tone : Col.Mix(c, tone, cov);
                     frontTree = frontTree * (1 - cov) + tree;
+                    if (l == near) nearTree = tree;
                 }
                 c = overNear.Over(c, x, y);
                 if (seaRows > 0)
@@ -1455,9 +1451,9 @@ sealed class Scene
                 }
                 if (seaRows > 0 && y >= seaRow0 && fy < seaEdge[x] + seaSoft)
                 {
-                    // The sea of clouds, down to its soft base, which wraps the treetops.
+                    // The sea of clouds, down to its soft base, behind the cabin hill's trees.
                     int fsi = (y - seaRow0) * width + x;
-                    float frontCov = seaCover[fsi] * w.Sea * Col.Smoothstep(seaEdge[x] + seaSoft, seaEdge[x] - 0.5f * seaSoft, fy);
+                    float frontCov = seaCover[fsi] * w.Sea * Col.Smoothstep(seaEdge[x] + seaSoft, seaEdge[x] - 0.5f * seaSoft, fy) * (1 - Math.Min(nearTree, 1f));
                     if (frontCov > 0) frontCov *= cloudiness(fx, seaDepth[fsi]);
                     if (frontCov > 0)
                     {

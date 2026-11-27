@@ -661,8 +661,8 @@ struct Scene {
         // moon's at night. Far off, the lumps grow too small to see and it fades
         // into haze. Cloudy days break it open: through wide gaps the world
         // below shows. Seen from the cabin's hill it's a layer: its lumpy, soft
-        // base hangs just above the leafy crowns, so only the tall spruces' tops
-        // fade up into it, and frays into tongues over the hills beyond, which
+        // base hangs just above the leafy crowns, behind the tall spruces whose
+        // tops stand up against it, and frays into tongues over the hills beyond, which
         // lie in its grey shade; the cabin's hill takes its soft light.
         let seaLit = mixOklab(pal.horizon, pal.glow, 0.5) * 1.3
         let seaShade = mixOklab(pal.mid, pal.horizon, 0.5) * 0.75
@@ -685,7 +685,7 @@ struct Scene {
         let seaEdge: [Float] = w.sea > 0 ? (0..<width).map { x in
             // Its base, over the hill: lumpy, rising and dipping along it, and
             // always above the leafy crowns (the tallest reach 0.053 of the
-            // height), so only the tall spruces' tops go up into it.
+            // height), so only the tall spruces' tops stand up against it.
             let swell = clamp01(0.5 + 0.6 * fbm(Float(x) / h * 1.6 + drift, octaves: 2, seed: seaSeed ^ 0x1b873593))
             return ground[(Self.layers.count - 1) * width + x] - (0.07 + 0.028 * swell) * h
                 - 0.012 * h * abs(fbm(Float(x) / h * 9 + drift * 3, octaves: 3, seed: seaSeed ^ 0x5bd1e995))
@@ -1030,6 +1030,7 @@ struct Scene {
                     }
 
                     var frontTree: Float = 0  // how much of this pixel is tree or porch, in front
+                    var nearTree: Float = 0   // how much is the cabin hill's trees or porch, in front of the clouds
                     for l in 0..<layerCount {
                         if l == near && seaBase > 0 && fy > seaEdge[x] && fy < seaEdge[x] + 0.04 * H {
                             // The base frays: soft tongues of cloud hang lower here and
@@ -1185,16 +1186,12 @@ struct Scene {
                             tone = mix(tone, valleyColor, w.valley * lake * (1 - 0.5 * tree))
                         }
                         tone = tone + pal.glow * (g * layer.haze * 0.8)   // in-scattered sun
-                        if seaRows > 0 && l >= 2 {
-                            if l < layerCount - 1 {
-                                tone = mix(tone, seaShade * 0.5, 0.45 * w.sea)  // the hills beyond, in the clouds' shade
-                            } else if fy < gy {
-                                // The tall spruces' tops fade up into the clouds' base.
-                                tone = mix(tone, seaHazeColor, 0.6 * seaBase * smoothstep(seaEdge[x] + 0.015 * H, seaEdge[x], fy))
-                            }
+                        if seaRows > 0 && l >= 2 && l < layerCount - 1 {
+                            tone = mix(tone, seaShade * 0.5, 0.45 * w.sea)  // the hills beyond, in the clouds' shade
                         }
                         c = cov == 1 ? tone : mix(c, tone, cov)
                         frontTree = frontTree * (1 - cov) + tree
+                        if l == near { nearTree = tree }
                     }
                     c = overNear.over(c, x, y)
                     if seaRows > 0 {
@@ -1203,9 +1200,9 @@ struct Scene {
                         if above > 0 { c = c + seaLit * (0.06 * w.sea * expf(-above / (0.012 * H))) }
                     }
                     if seaRows > 0 && y >= seaRow0 && fy < seaEdge[x] + seaSoft {
-                        // The sea of clouds, down to its soft base, which wraps the treetops.
+                        // The sea of clouds, down to its soft base, behind the cabin hill's trees.
                         let i = (y - seaRow0) * width + x
-                        var cov = seaCover[i] * w.sea * smoothstep(seaEdge[x] + seaSoft, seaEdge[x] - 0.5 * seaSoft, fy)
+                        var cov = seaCover[i] * w.sea * smoothstep(seaEdge[x] + seaSoft, seaEdge[x] - 0.5 * seaSoft, fy) * (1 - min(nearTree, 1))
                         if cov > 0 { cov *= cloudiness(fx, seaDepth[i]) }
                         if cov > 0 {
                             let tone = mixOklab(mix(seaShade, seaLit, seaLight[i]), seaHazeColor, smoothstep(4, 45, seaDepth[i]))
